@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>MyMoney · Control de gastos</title>
+  <meta name="description" content="Controla tus ingresos y gastos con categorías personalizadas. Funciona sin conexión.">
+  <meta name="theme-color" content="#111111">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="MyMoney">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/styles.css">
+  <script>
+    // Aplica el tema antes de pintar para evitar parpadeo
+    (function () {
+      try {
+        var t = localStorage.getItem('mm-theme') || 'system';
+        if (t === 'system') t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.dataset.theme = t;
+      } catch (e) { document.documentElement.dataset.theme = 'light'; }
+    })();
+  </script>
+</head>
+<body>
+  <div class="app">
+    <!-- Navegación: barra lateral en escritorio, barra inferior en celular -->
+    <nav class="nav" aria-label="Principal">
+      <div class="brand">
+        <img src="icons/icon.svg" alt="" width="36" height="36">
+        <span>My<b>Money</b></span>
+      </div>
+      <button class="nav-item active" data-view="dashboard">
+        <svg viewBox="0 0 24 24"><path d="M3 12l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
+        <span>Resumen</span>
+      </button>
+      <button class="nav-item" data-view="transactions">
+        <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+        <span>Movimientos</span>
+      </button>
+      <button class="nav-fab" id="fab" aria-label="Nuevo movimiento">
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+      <button class="nav-item" data-view="categories">
+        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>
+        <span>Categorías</span>
+      </button>
+      <button class="nav-item" data-view="settings">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+        <span>Ajustes</span>
+      </button>
+      <div class="nav-actions">
+        <button class="btn btn-gold btn-block" data-action="new-income">
+          <svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg> Ingresar
+        </button>
+        <button class="btn btn-outline btn-block" data-action="new-expense">
+          <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12l7 7 7-7"/></svg> Retirar
+        </button>
+      </div>
+    </nav>
+
+    <main class="main">
+      <header class="topbar">
+        <h1 id="view-title">Resumen</h1>
+        <div class="month-picker" id="month-picker">
+          <button class="icon-btn" id="month-prev" aria-label="Mes anterior">
+            <svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>
+          </button>
+          <button class="month-label" id="month-label" title="Ir al mes actual">—</button>
+          <button class="icon-btn" id="month-next" aria-label="Mes siguiente">
+            <svg viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- RESUMEN -->
+      <section class="view active" id="view-dashboard">
+        <div class="grid-dash">
+          <article class="card balance-card">
+            <p class="eyebrow">Saldo total</p>
+            <p class="balance" id="balance-total">$0.00</p>
+            <div class="balance-split">
+              <div>
+                <span class="dot dot-gold"></span>
+                <p class="eyebrow">Ingresos del mes</p>
+                <p class="split-amount" id="month-income">$0.00</p>
+              </div>
+              <div>
+                <span class="dot dot-light"></span>
+                <p class="eyebrow">Gastos del mes</p>
+                <p class="split-amount" id="month-expense">$0.00</p>
+              </div>
+            </div>
+            <div class="balance-actions">
+              <button class="btn btn-gold" data-action="new-income">
+                <svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg> Ingresar
+              </button>
+              <button class="btn btn-ghost-light" data-action="new-expense">
+                <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12l7 7 7-7"/></svg> Retirar
+              </button>
+            </div>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h2>Por categoría</h2>
+              <div class="segmented small" id="breakdown-toggle" role="tablist">
+                <button class="active" data-type="expense">Gastos</button>
+                <button data-type="income">Ingresos</button>
+              </div>
+            </div>
+            <div class="breakdown" id="breakdown"></div>
+          </article>
+
+          <article class="card span-2">
+            <div class="card-head">
+              <h2>Últimos movimientos</h2>
+              <button class="link-btn" data-goto="transactions">Ver todos</button>
+            </div>
+            <ul class="tx-list" id="recent-list"></ul>
+          </article>
+        </div>
+      </section>
+
+      <!-- MOVIMIENTOS -->
+      <section class="view" id="view-transactions">
+        <div class="filters card">
+          <div class="segmented" id="filter-type">
+            <button class="active" data-type="all">Todos</button>
+            <button data-type="income">Ingresos</button>
+            <button data-type="expense">Gastos</button>
+          </div>
+          <select id="filter-category" aria-label="Filtrar por categoría">
+            <option value="all">Todas las categorías</option>
+          </select>
+          <div class="search">
+            <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+            <input type="search" id="filter-search" placeholder="Buscar nota o categoría…">
+          </div>
+        </div>
+        <div class="summary-strip" id="tx-summary"></div>
+        <div id="tx-groups"></div>
+      </section>
+
+      <!-- CATEGORÍAS -->
+      <section class="view" id="view-categories">
+        <div class="card-head page-head">
+          <div class="segmented" id="cat-tabs">
+            <button class="active" data-type="expense">Gastos</button>
+            <button data-type="income">Ingresos</button>
+          </div>
+          <button class="btn btn-gold" id="btn-new-category">
+            <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg> Nueva categoría
+          </button>
+        </div>
+        <div class="cat-grid" id="cat-grid"></div>
+      </section>
+
+      <!-- AJUSTES -->
+      <section class="view" id="view-settings">
+        <div class="settings">
+          <article class="card">
+            <h2>Preferencias</h2>
+            <label class="field">
+              <span>Moneda</span>
+              <select id="set-currency">
+                <option value="MXN">Peso mexicano (MXN)</option>
+                <option value="USD">Dólar estadounidense (USD)</option>
+                <option value="EUR">Euro (EUR)</option>
+                <option value="COP">Peso colombiano (COP)</option>
+                <option value="ARS">Peso argentino (ARS)</option>
+                <option value="CLP">Peso chileno (CLP)</option>
+                <option value="PEN">Sol peruano (PEN)</option>
+                <option value="GTQ">Quetzal (GTQ)</option>
+                <option value="DOP">Peso dominicano (DOP)</option>
+              </select>
+            </label>
+            <div class="field">
+              <span>Tema</span>
+              <div class="segmented" id="set-theme">
+                <button data-theme="system">Sistema</button>
+                <button data-theme="light">Claro</button>
+                <button data-theme="dark">Oscuro</button>
+              </div>
+            </div>
+          </article>
+
+          <article class="card">
+            <h2>Respaldo</h2>
+            <p class="muted">Tus datos se guardan solo en este dispositivo (IndexedDB). Exporta un respaldo para no perderlos.</p>
+            <div class="row-btns">
+              <button class="btn btn-outline" id="btn-export">
+                <svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg> Exportar
+              </button>
+              <label class="btn btn-outline" for="import-file">
+                <svg viewBox="0 0 24 24"><path d="M12 21V9M7 14l5-5 5 5M5 3h14"/></svg> Importar
+              </label>
+              <input type="file" id="import-file" accept="application/json,.json" hidden>
+            </div>
+          </article>
+
+          <article class="card" id="install-card" hidden>
+            <h2>Instalar app</h2>
+            <p class="muted">Instala MyMoney en tu dispositivo para abrirla como una app y usarla sin conexión.</p>
+            <button class="btn btn-gold" id="btn-install">Instalar</button>
+          </article>
+
+          <article class="card danger-zone">
+            <h2>Zona de peligro</h2>
+            <p class="muted">Elimina todos los movimientos y categorías personalizadas.</p>
+            <button class="btn btn-danger" id="btn-reset">Borrar todos los datos</button>
+          </article>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Diálogo: movimiento -->
+  <dialog id="tx-dialog" class="sheet">
+    <form id="tx-form" method="dialog" novalidate>
+      <header class="sheet-head">
+        <h2 id="tx-dialog-title">Nuevo movimiento</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Cerrar">
+          <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </header>
+      <div class="sheet-body">
+        <div class="segmented type-toggle" id="tx-type">
+          <button type="button" data-type="income">Ingresar</button>
+          <button type="button" data-type="expense">Retirar</button>
+        </div>
+        <label class="amount-field">
+          <span class="currency-symbol" id="tx-currency">$</span>
+          <input id="tx-amount" inputmode="decimal" autocomplete="off" placeholder="0.00" aria-label="Monto" required>
+        </label>
+        <div class="field">
+          <span>Categoría</span>
+          <div class="chip-picker" id="tx-categories"></div>
+        </div>
+        <div class="field-row">
+          <label class="field">
+            <span>Fecha</span>
+            <input type="date" id="tx-date" required>
+          </label>
+          <label class="field grow">
+            <span>Nota (opcional)</span>
+            <input type="text" id="tx-note" maxlength="120" placeholder="Ej. Súper de la semana">
+          </label>
+        </div>
+        <p class="form-error" id="tx-error" role="alert"></p>
+      </div>
+      <footer class="sheet-foot">
+        <button type="button" class="btn btn-danger-ghost" id="tx-delete" hidden>Eliminar</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn btn-outline" data-close>Cancelar</button>
+        <button type="submit" class="btn btn-gold">Guardar</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- Diálogo: categoría -->
+  <dialog id="cat-dialog" class="sheet">
+    <form id="cat-form" method="dialog" novalidate>
+      <header class="sheet-head">
+        <h2 id="cat-dialog-title">Nueva categoría</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Cerrar">
+          <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </header>
+      <div class="sheet-body">
+        <div class="cat-preview"><span class="cat-chip" id="cat-preview">Categoría</span></div>
+        <label class="field">
+          <span>Nombre</span>
+          <input type="text" id="cat-name" maxlength="30" placeholder="Ej. Mascotas" required>
+        </label>
+        <div class="field">
+          <span>Tipo</span>
+          <div class="segmented" id="cat-type">
+            <button type="button" data-type="expense">Gasto</button>
+            <button type="button" data-type="income">Ingreso</button>
+            <button type="button" data-type="both">Ambos</button>
+          </div>
+        </div>
+        <div class="field">
+          <span>Color</span>
+          <div class="swatches" id="cat-swatches"></div>
+        </div>
+        <p class="form-error" id="cat-error" role="alert"></p>
+      </div>
+      <footer class="sheet-foot">
+        <button type="button" class="btn btn-danger-ghost" id="cat-delete" hidden>Eliminar</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn btn-outline" data-close>Cancelar</button>
+        <button type="submit" class="btn btn-gold">Guardar</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- Diálogo: confirmación -->
+  <dialog id="confirm-dialog" class="sheet small">
+    <form method="dialog">
+      <div class="sheet-body">
+        <h2 id="confirm-title">¿Seguro?</h2>
+        <p class="muted" id="confirm-text"></p>
+      </div>
+      <footer class="sheet-foot">
+        <span class="spacer"></span>
+        <button value="cancel" class="btn btn-outline">Cancelar</button>
+        <button value="ok" class="btn btn-danger" id="confirm-ok">Confirmar</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

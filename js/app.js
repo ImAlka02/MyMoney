@@ -1,0 +1,702 @@
+// =========================================================
+// MyMoney — lógica de la aplicación
+// =========================================================
+import * as DB from './db.js';
+
+const UNCATEGORIZED = { id: null, name: 'Sin categoría', color: '#8A8884', type: 'both' };
+const PALETTE = [
+  '#C0623B', '#D08C3A', '#B8913E', '#4F7942', '#2F8F83', '#3B6E8F', '#5A7D9A',
+  '#6B5B95', '#8E5A9B', '#C07A9A', '#B5485D', '#7A5C45', '#7A7873', '#2B2B2B',
+];
+const VIEW_TITLES = { dashboard: 'Resumen', transactions: 'Movimientos', categories: 'Categorías', settings: 'Ajustes' };
+
+const state = {
+  view: 'dashboard',
+  month: monthKey(new Date()),
+  currency: 'MXN',
+  categories: [],
+  transactions: [],
+  catMap: new Map(),
+  breakdownType: 'expense',
+  filterType: 'all',
+  filterCat: 'all',
+  search: '',
+  catTab: 'expense',
+  // diálogo de movimiento
+  editingTx: null,
+  txType: 'expense',
+  txCategoryId: null,
+  // diálogo de categoría
+  editingCat: null,
+  catType: 'expense',
+  catColor: PALETTE[0],
+  catFromTx: false,
+};
+
+// ---------- Utilidades ----------
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+function pad(n) { return String(n).padStart(2, '0'); }
+
+function monthKey(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; }
+function todayStr() { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
+function parseDate(str) { const [y, m, d] = str.split('-').map(Number); return new Date(y, m - 1, d || 1); }
+
+function escapeHTML(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+let formatter = null;
+function makeFormatter() {
+  try {
+    formatter = new Intl.NumberFormat('es-MX', { style: 'currency', currency: state.currency, minimumFractionDigits: 2 });
+  } catch {
+    formatter = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' });
+  }
+}
+const fmt = (cents) => formatter.format(cents / 100);
+function currencySymbol() {
+  const part = formatter.formatToParts(0).find((p) => p.type === 'currency');
+  return part ? part.value : '$';
+}
+
+/** Convierte "1,234.50" o "1234,5" a centavos enteros. */
+function parseAmount(raw) {
+  let s = String(raw).replace(/[^\d.,]/g, '');
+  if (!s) return NaN;
+  if (s.lastIndexOf(',') > s.lastIndexOf('.')) s = s.replace(/\./g, '').replace(',', '.');
+  else s = s.replace(/,/g, '');
+  const n = parseFloat(s);
+  return Number.isFinite(n) ? Math.round(n * 100) : NaN;
+}
+
+/** Color de texto legible sobre un fondo dado. */
+function textOn(hex) {
+  const h = hex.replace('#', '');
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(h.substr(i, 2), 16) / 255)
+    .map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+  const L = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  return L > 0.4 ? '#111111' : '#FFFFFF';
+}
+
+const initial = (name) => (Array.from(name.trim())[0] || '?').toUpperCase();
+const getCat = (id) => state.catMap.get(id) || UNCATEGORIZED;
+const catFits = (cat, type) => cat.type === type || cat.type === 'both';
+
+function sortTx(list) {
+  return list.sort((a, b) => (b.date.localeCompare(a.date)) || (b.createdAt - a.createdAt));
+}
+
+function toast(msg) {
+  const el = $('#toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => el.classList.remove('show'), 2400);
+}
+
+function confirmDialog(title, text, okLabel = 'Confirmar') {
+  const dlg = $('#confirm-dialog');
+  $('#confirm-title').textContent = title;
+  $('#confirm-text').textContent = text;
+  $('#confirm-ok').textContent = okLabel;
+  dlg.returnValue = 'cancel';
+  dlg.showModal();
+  return new Promise((resolve) => {
+    dlg.addEventListener('close', () => resolve(dlg.returnValue === 'ok'), { once: true });
+  });
+}
+
+// ---------- Datos ----------
+async function loadData() {
+  const [categories, transactions] = await Promise.all([DB.getAll('categories'), DB.getAll('transactions')]);
+  state.categories = categories.sort((a, b) => a.name.localeCompare(b.name, 'es'));
+  state.catMap = new Map(categories.map((c) => [c.id, c]));
+  state.transactions = sortTx(transactions);
+}
+
+function monthTransactions() {
+  return state.transactions.filter((t) => t.date.startsWith(state.month));
+}
+
+function totals(list) {
+  let income = 0, expense = 0;
+  for (const t of list) t.type === 'income' ? (income += t.amount) : (expense += t.amount);
+  return { income, expense, net: income - expense };
+}
+
+// ---------- Render ----------
+function renderAll() {
+  renderMonth();
+  renderDashboard();
+  renderTransactions();
+  renderCategories();
+}
+
+function renderMonth() {
+  const label = parseDate(state.month).toLocaleDateString('es-MX', { month: 'long', year: 'numeric' });
+  $('#month-label').textContent = label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+function txItemHTML(t, { showDate = false } = {}) {
+  const cat = getCat(t.categoryId);
+  const sign = t.type === 'income' ? '+' : '−';
+  const date = showDate ? `<span>${parseDate(t.date).toLocaleDateString('es-MX', { day: 'numeric', month: 'short' })}</span>` : '';
+  return `
+    <li class="tx-item" data-id="${t.id}" style="--c:${cat.color};border-left-color:${cat.color}" tabindex="0">
+      <div class="tx-avatar" style="background:${cat.color};color:${textOn(cat.color)}">${escapeHTML(initial(cat.name))}</div>
+      <div class="tx-main">
+        <div class="tx-title">${escapeHTML(t.note || cat.name)}</div>
+        <div class="tx-meta"><span class="cat-chip" style="--c:${cat.color}">${escapeHTML(cat.name)}</span>${date}</div>
+      </div>
+      <div class="tx-amount ${t.type}">${sign}${fmt(t.amount)}<small>${t.type === 'income' ? 'Ingreso' : 'Gasto'}</small></div>
+    </li>`;
+}
+
+function emptyHTML(title, sub) {
+  return `<div class="empty">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9 12h6M12 9v6"/></svg>
+    <p><strong>${title}</strong></p>${sub ? `<p>${sub}</p>` : ''}</div>`;
+}
+
+function renderDashboard() {
+  const all = totals(state.transactions);
+  const month = monthTransactions();
+  const m = totals(month);
+
+  const bal = $('#balance-total');
+  bal.textContent = fmt(all.net);
+  bal.classList.toggle('negative', all.net < 0);
+  $('#month-income').textContent = fmt(m.income);
+  $('#month-expense').textContent = fmt(m.expense);
+
+  // Desglose por categoría
+  const type = state.breakdownType;
+  const list = month.filter((t) => t.type === type);
+  const groups = new Map();
+  for (const t of list) groups.set(t.categoryId, (groups.get(t.categoryId) || 0) + t.amount);
+  const total = type === 'income' ? m.income : m.expense;
+  const rows = [...groups.entries()].map(([id, amount]) => ({ cat: getCat(id), amount })).sort((a, b) => b.amount - a.amount);
+
+  const box = $('#breakdown');
+  if (!rows.length) {
+    box.innerHTML = emptyHTML(type === 'income' ? 'Sin ingresos este mes' : 'Sin gastos este mes', 'Registra un movimiento para ver el desglose.');
+    box.style.display = 'block';
+  } else {
+    box.style.display = '';
+    let acc = 0;
+    const stops = rows.map(({ cat, amount }) => {
+      const from = (acc / total) * 360;
+      acc += amount;
+      const to = (acc / total) * 360;
+      return `${cat.color} ${from}deg ${to}deg`;
+    });
+    box.innerHTML = `
+      <div class="donut" style="background:conic-gradient(${stops.join(',')})">
+        <div class="donut-center"><strong>${fmt(total)}</strong><span>${type === 'income' ? 'Ingresos' : 'Gastos'}</span></div>
+      </div>
+      <ul class="legend">
+        ${rows.slice(0, 6).map(({ cat, amount }) => {
+          const pct = Math.round((amount / total) * 100);
+          return `<li>
+            <div class="legend-row">
+              <span class="legend-name"><span class="legend-swatch" style="background:${cat.color}"></span><span>${escapeHTML(cat.name)}</span></span>
+              <span class="legend-val">${fmt(amount)}<small>${pct}%</small></span>
+            </div>
+            <div class="bar"><i style="width:${pct}%;background:${cat.color}"></i></div>
+          </li>`;
+        }).join('')}
+        ${rows.length > 6 ? `<li class="muted" style="font-size:12px">+${rows.length - 6} categorías más</li>` : ''}
+      </ul>`;
+  }
+
+  // Recientes
+  const recent = month.slice(0, 6);
+  $('#recent-list').innerHTML = recent.length
+    ? recent.map((t) => txItemHTML(t, { showDate: true })).join('')
+    : emptyHTML('Aún no hay movimientos este mes', 'Usa “Ingresar” o “Retirar” para empezar.');
+}
+
+function dayLabel(dateStr) {
+  const today = todayStr();
+  const y = new Date(); y.setDate(y.getDate() - 1);
+  const yesterday = `${y.getFullYear()}-${pad(y.getMonth() + 1)}-${pad(y.getDate())}`;
+  if (dateStr === today) return 'Hoy';
+  if (dateStr === yesterday) return 'Ayer';
+  return parseDate(dateStr).toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'short' });
+}
+
+function renderTransactions() {
+  // opciones del filtro de categorías
+  const sel = $('#filter-category');
+  const relevant = state.categories.filter((c) => state.filterType === 'all' || catFits(c, state.filterType));
+  if (state.filterCat !== 'all' && state.filterCat !== 'none' && !relevant.some((c) => String(c.id) === state.filterCat)) state.filterCat = 'all';
+  sel.innerHTML = `<option value="all">Todas las categorías</option>` +
+    relevant.map((c) => `<option value="${c.id}">${escapeHTML(c.name)}</option>`).join('') +
+    `<option value="none">Sin categoría</option>`;
+  sel.value = state.filterCat;
+
+  const q = state.search.trim().toLowerCase();
+  const list = monthTransactions().filter((t) => {
+    if (state.filterType !== 'all' && t.type !== state.filterType) return false;
+    if (state.filterCat === 'none' && t.categoryId != null && state.catMap.has(t.categoryId)) return false;
+    if (state.filterCat !== 'all' && state.filterCat !== 'none' && String(t.categoryId) !== state.filterCat) return false;
+    if (q) {
+      const hay = `${t.note || ''} ${getCat(t.categoryId).name}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+
+  const tot = totals(list);
+  $('#tx-summary').innerHTML = `
+    <div class="card"><p class="eyebrow">Balance</p><strong>${fmt(tot.net)}</strong></div>
+    <div class="card"><p class="eyebrow">Ingresos</p><strong class="gold">+${fmt(tot.income)}</strong></div>
+    <div class="card"><p class="eyebrow">Gastos</p><strong>−${fmt(tot.expense)}</strong></div>`;
+
+  if (!list.length) {
+    $('#tx-groups').innerHTML = `<div class="card">${emptyHTML('No hay movimientos', q || state.filterType !== 'all' || state.filterCat !== 'all' ? 'Prueba con otros filtros.' : 'Registra tu primer ingreso o gasto de este mes.')}</div>`;
+    return;
+  }
+
+  const byDay = new Map();
+  for (const t of list) {
+    if (!byDay.has(t.date)) byDay.set(t.date, []);
+    byDay.get(t.date).push(t);
+  }
+  $('#tx-groups').innerHTML = [...byDay.entries()].map(([date, items]) => {
+    const net = totals(items).net;
+    return `<div class="tx-group">
+      <div class="tx-group-head"><strong>${dayLabel(date)}</strong><span>${net >= 0 ? '+' : '−'}${fmt(Math.abs(net))}</span></div>
+      <div class="card"><ul class="tx-list">${items.map((t) => txItemHTML(t)).join('')}</ul></div>
+    </div>`;
+  }).join('');
+}
+
+function renderCategories() {
+  const tab = state.catTab;
+  const usage = new Map();
+  for (const t of state.transactions) {
+    if (t.type !== tab) continue;
+    const u = usage.get(t.categoryId) || { count: 0, amount: 0 };
+    u.count++; u.amount += t.amount;
+    usage.set(t.categoryId, u);
+  }
+  const cats = state.categories.filter((c) => catFits(c, tab));
+  $('#cat-grid').innerHTML = cats.map((c) => {
+    const u = usage.get(c.id) || { count: 0, amount: 0 };
+    return `<button class="card cat-card" data-cat="${c.id}" style="--cat:${c.color}">
+      <div class="tx-avatar" style="background:${c.color};color:${textOn(c.color)}">${escapeHTML(initial(c.name))}</div>
+      <div class="cat-info">
+        <h3>${escapeHTML(c.name)}${c.type === 'both' ? '<span class="badge">Ambos</span>' : ''}</h3>
+        <p>${u.count} ${u.count === 1 ? 'movimiento' : 'movimientos'}</p>
+      </div>
+      <span class="cat-total">${fmt(u.amount)}</span>
+    </button>`;
+  }).join('') || `<div class="card">${emptyHTML('Sin categorías', 'Crea una nueva categoría.')}</div>`;
+}
+
+// ---------- Navegación ----------
+function setView(view, push = true) {
+  if (!VIEW_TITLES[view]) view = 'dashboard';
+  state.view = view;
+  $$('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${view}`));
+  $$('.nav-item').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
+  $('#view-title').textContent = VIEW_TITLES[view];
+  $('#month-picker').hidden = !(view === 'dashboard' || view === 'transactions');
+  if (push && location.hash !== `#${view}`) history.pushState(null, '', `#${view}`);
+  window.scrollTo({ top: 0 });
+}
+
+function shiftMonth(delta) {
+  const d = parseDate(state.month);
+  d.setMonth(d.getMonth() + delta);
+  state.month = monthKey(d);
+  renderAll();
+}
+
+function setSegmented(container, attr, value) {
+  $$(`button`, container).forEach((b) => b.classList.toggle('active', b.dataset[attr] === value));
+}
+
+// ---------- Diálogo de movimiento ----------
+function openTxDialog({ type = 'expense', tx = null } = {}) {
+  state.editingTx = tx;
+  state.txType = tx ? tx.type : type;
+  state.txCategoryId = tx ? tx.categoryId : null;
+
+  $('#tx-dialog-title').textContent = tx ? 'Editar movimiento' : (state.txType === 'income' ? 'Ingresar dinero' : 'Retirar dinero');
+  $('#tx-amount').value = tx ? (tx.amount / 100).toFixed(2) : '';
+  $('#tx-date').value = tx ? tx.date : (state.month === monthKey(new Date()) ? todayStr() : `${state.month}-01`);
+  $('#tx-note').value = tx?.note || '';
+  $('#tx-currency').textContent = currencySymbol();
+  $('#tx-error').textContent = '';
+  $('#tx-delete').hidden = !tx;
+  setSegmented($('#tx-type'), 'type', state.txType);
+  renderTxCategories();
+
+  $('#tx-dialog').showModal();
+  if (!matchMedia('(pointer: coarse)').matches) $('#tx-amount').focus();
+}
+
+function renderTxCategories() {
+  const cats = state.categories.filter((c) => catFits(c, state.txType));
+  if (state.txCategoryId != null && !cats.some((c) => c.id === state.txCategoryId)) state.txCategoryId = null;
+  $('#tx-categories').innerHTML = cats.map((c) => `
+    <button type="button" class="chip-option ${c.id === state.txCategoryId ? 'selected' : ''}" data-id="${c.id}" style="--chip:${c.color}">
+      <i style="background:${c.color}"></i>${escapeHTML(c.name)}
+    </button>`).join('') + `
+    <button type="button" class="chip-option add" data-add>
+      <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Nueva
+    </button>`;
+}
+
+async function saveTx(e) {
+  e.preventDefault();
+  const err = $('#tx-error');
+  const amount = parseAmount($('#tx-amount').value);
+  const date = $('#tx-date').value;
+  if (!(amount > 0)) { err.textContent = 'Ingresa un monto mayor a 0.'; $('#tx-amount').focus(); return; }
+  if (state.txCategoryId == null) { err.textContent = 'Elige una categoría.'; return; }
+  if (!date) { err.textContent = 'Elige una fecha.'; return; }
+
+  const tx = {
+    ...(state.editingTx || { createdAt: Date.now() }),
+    type: state.txType,
+    amount,
+    categoryId: state.txCategoryId,
+    date,
+    note: $('#tx-note').value.trim(),
+    updatedAt: Date.now(),
+  };
+  await DB.put('transactions', tx);
+  $('#tx-dialog').close();
+  await loadData();
+  // Si el movimiento cae en otro mes, navega a ese mes para que se vea
+  if (!date.startsWith(state.month)) state.month = date.slice(0, 7);
+  renderAll();
+  toast(state.editingTx ? 'Movimiento actualizado' : (tx.type === 'income' ? 'Ingreso registrado' : 'Gasto registrado'));
+}
+
+async function deleteTx() {
+  const tx = state.editingTx;
+  if (!tx) return;
+  const ok = await confirmDialog('Eliminar movimiento', `Se eliminará este ${tx.type === 'income' ? 'ingreso' : 'gasto'} de ${fmt(tx.amount)}. Esta acción no se puede deshacer.`, 'Eliminar');
+  if (!ok) return;
+  await DB.remove('transactions', tx.id);
+  $('#tx-dialog').close();
+  await loadData();
+  renderAll();
+  toast('Movimiento eliminado');
+}
+
+// ---------- Diálogo de categoría ----------
+function openCatDialog({ cat = null, type = 'expense', fromTx = false } = {}) {
+  state.editingCat = cat;
+  state.catType = cat ? cat.type : type;
+  state.catColor = cat ? cat.color : PALETTE[Math.floor(Math.random() * PALETTE.length)];
+  state.catFromTx = fromTx;
+
+  $('#cat-dialog-title').textContent = cat ? 'Editar categoría' : 'Nueva categoría';
+  $('#cat-name').value = cat?.name || '';
+  $('#cat-error').textContent = '';
+  $('#cat-delete').hidden = !cat;
+  setSegmented($('#cat-type'), 'type', state.catType);
+  renderSwatches();
+  updateCatPreview();
+  $('#cat-dialog').showModal();
+  if (!matchMedia('(pointer: coarse)').matches) $('#cat-name').focus();
+}
+
+function renderSwatches() {
+  const custom = !PALETTE.includes(state.catColor.toUpperCase()) && !PALETTE.includes(state.catColor);
+  $('#cat-swatches').innerHTML = PALETTE.map((c) =>
+    `<button type="button" class="swatch ${c.toLowerCase() === state.catColor.toLowerCase() ? 'selected' : ''}" data-color="${c}" style="background:${c}" aria-label="Color ${c}"></button>`
+  ).join('') + `
+    <label class="swatch-custom ${custom ? 'selected' : ''}" title="Color personalizado" ${custom ? `style="background:${state.catColor}"` : ''}>
+      <input type="color" id="cat-color-input" value="${state.catColor}" aria-label="Color personalizado">
+    </label>`;
+}
+
+function updateCatPreview() {
+  const el = $('#cat-preview');
+  el.textContent = $('#cat-name').value.trim() || 'Categoría';
+  el.style.setProperty('--c', state.catColor);
+}
+
+async function saveCat(e) {
+  e.preventDefault();
+  const err = $('#cat-error');
+  const name = $('#cat-name').value.trim();
+  if (!name) { err.textContent = 'Escribe un nombre.'; $('#cat-name').focus(); return; }
+  const dup = state.categories.find((c) =>
+    c.id !== state.editingCat?.id && c.name.toLowerCase() === name.toLowerCase() &&
+    (c.type === state.catType || c.type === 'both' || state.catType === 'both'));
+  if (dup) { err.textContent = 'Ya existe una categoría con ese nombre.'; return; }
+
+  const cat = {
+    ...(state.editingCat || { createdAt: Date.now(), isDefault: false }),
+    name,
+    type: state.catType,
+    color: state.catColor,
+  };
+  const id = await DB.put('categories', cat);
+  $('#cat-dialog').close();
+  await loadData();
+
+  if (state.catFromTx) {
+    if (catFits(cat, state.txType)) state.txCategoryId = id;
+    renderTxCategories();
+  }
+  renderAll();
+  toast(state.editingCat ? 'Categoría actualizada' : 'Categoría creada');
+}
+
+async function deleteCat() {
+  const cat = state.editingCat;
+  if (!cat) return;
+  const used = state.transactions.filter((t) => t.categoryId === cat.id).length;
+  const msg = used
+    ? `“${cat.name}” se usa en ${used} ${used === 1 ? 'movimiento' : 'movimientos'}. Quedarán como “Sin categoría”.`
+    : `Se eliminará la categoría “${cat.name}”.`;
+  const ok = await confirmDialog('Eliminar categoría', msg, 'Eliminar');
+  if (!ok) return;
+  await DB.deleteCategory(cat.id);
+  $('#cat-dialog').close();
+  await loadData();
+  renderAll();
+  toast('Categoría eliminada');
+}
+
+// ---------- Ajustes ----------
+function applyTheme(pref) {
+  try { localStorage.setItem('mm-theme', pref); } catch { /* sin almacenamiento */ }
+  const resolved = pref === 'system' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : pref;
+  document.documentElement.dataset.theme = resolved;
+  document.querySelector('meta[name="theme-color"]').content = resolved === 'dark' ? '#0D0D0D' : '#111111';
+  setSegmented($('#set-theme'), 'theme', pref);
+}
+function currentThemePref() {
+  try { return localStorage.getItem('mm-theme') || 'system'; } catch { return 'system'; }
+}
+
+async function exportData() {
+  const data = await DB.exportAll();
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `mymoney-respaldo-${todayStr()}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  toast('Respaldo exportado');
+}
+
+async function importData(file) {
+  try {
+    const data = JSON.parse(await file.text());
+    if (data.app !== 'MyMoney') throw new Error('El archivo no es un respaldo de MyMoney.');
+    const ok = await confirmDialog('Importar respaldo',
+      `Se reemplazarán tus datos actuales con ${data.transactions.length} movimientos y ${data.categories.length} categorías del respaldo.`, 'Importar');
+    if (!ok) return;
+    await DB.importAll(data);
+    state.currency = await DB.getSetting('currency', 'MXN');
+    $('#set-currency').value = state.currency;
+    makeFormatter();
+    await loadData();
+    renderAll();
+    toast('Respaldo importado');
+  } catch (err) {
+    toast(err.message || 'No se pudo importar el archivo');
+  }
+}
+
+// ---------- Eventos ----------
+function bindEvents() {
+  // Navegación
+  $$('.nav-item').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
+  $$('[data-goto]').forEach((b) => b.addEventListener('click', () => setView(b.dataset.goto)));
+  window.addEventListener('popstate', () => setView(location.hash.slice(1) || 'dashboard', false));
+
+  // Acciones rápidas
+  $$('[data-action="new-income"]').forEach((b) => b.addEventListener('click', () => openTxDialog({ type: 'income' })));
+  $$('[data-action="new-expense"]').forEach((b) => b.addEventListener('click', () => openTxDialog({ type: 'expense' })));
+  $('#fab').addEventListener('click', () => openTxDialog({ type: 'expense' }));
+
+  // Mes
+  $('#month-prev').addEventListener('click', () => shiftMonth(-1));
+  $('#month-next').addEventListener('click', () => shiftMonth(1));
+  $('#month-label').addEventListener('click', () => { state.month = monthKey(new Date()); renderAll(); });
+
+  // Desglose
+  $('#breakdown-toggle').addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    state.breakdownType = b.dataset.type;
+    setSegmented(e.currentTarget, 'type', state.breakdownType);
+    renderDashboard();
+  });
+
+  // Abrir movimiento al hacer clic en la lista
+  const openFromList = (e) => {
+    const li = e.target.closest('.tx-item'); if (!li) return;
+    if (e.type === 'keydown' && e.key !== 'Enter') return;
+    const tx = state.transactions.find((t) => t.id === Number(li.dataset.id));
+    if (tx) openTxDialog({ tx });
+  };
+  ['#recent-list', '#tx-groups'].forEach((sel) => {
+    $(sel).addEventListener('click', openFromList);
+    $(sel).addEventListener('keydown', openFromList);
+  });
+
+  // Filtros
+  $('#filter-type').addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    state.filterType = b.dataset.type;
+    setSegmented(e.currentTarget, 'type', state.filterType);
+    renderTransactions();
+  });
+  $('#filter-category').addEventListener('change', (e) => { state.filterCat = e.target.value; renderTransactions(); });
+  $('#filter-search').addEventListener('input', (e) => { state.search = e.target.value; renderTransactions(); });
+
+  // Categorías
+  $('#cat-tabs').addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    state.catTab = b.dataset.type;
+    setSegmented(e.currentTarget, 'type', state.catTab);
+    renderCategories();
+  });
+  $('#btn-new-category').addEventListener('click', () => openCatDialog({ type: state.catTab }));
+  $('#cat-grid').addEventListener('click', (e) => {
+    const card = e.target.closest('[data-cat]'); if (!card) return;
+    openCatDialog({ cat: state.catMap.get(Number(card.dataset.cat)) });
+  });
+
+  // Diálogo movimiento
+  $('#tx-form').addEventListener('submit', saveTx);
+  $('#tx-delete').addEventListener('click', deleteTx);
+  $('#tx-type').addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    state.txType = b.dataset.type;
+    setSegmented(e.currentTarget, 'type', state.txType);
+    if (!state.editingTx) $('#tx-dialog-title').textContent = state.txType === 'income' ? 'Ingresar dinero' : 'Retirar dinero';
+    renderTxCategories();
+  });
+  $('#tx-categories').addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.hasAttribute('data-add')) return openCatDialog({ type: state.txType, fromTx: true });
+    state.txCategoryId = Number(b.dataset.id);
+    $('#tx-error').textContent = '';
+    $$('.chip-option', e.currentTarget).forEach((c) => c.classList.toggle('selected', c === b));
+  });
+
+  // Diálogo categoría
+  $('#cat-form').addEventListener('submit', saveCat);
+  $('#cat-delete').addEventListener('click', deleteCat);
+  $('#cat-name').addEventListener('input', updateCatPreview);
+  $('#cat-type').addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    state.catType = b.dataset.type;
+    setSegmented(e.currentTarget, 'type', state.catType);
+  });
+  $('#cat-swatches').addEventListener('click', (e) => {
+    const b = e.target.closest('.swatch'); if (!b) return;
+    state.catColor = b.dataset.color;
+    renderSwatches();
+    updateCatPreview();
+  });
+  $('#cat-swatches').addEventListener('input', (e) => {
+    if (e.target.id !== 'cat-color-input') return;
+    state.catColor = e.target.value;
+    $$('.swatch', e.currentTarget).forEach((s) => s.classList.remove('selected'));
+    const lbl = e.target.parentElement;
+    lbl.classList.add('selected');
+    lbl.style.background = state.catColor;
+    updateCatPreview();
+  });
+
+  // Cerrar diálogos (botones y clic en el fondo)
+  $$('dialog').forEach((dlg) => {
+    dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); });
+    $$('[data-close]', dlg).forEach((b) => b.addEventListener('click', () => dlg.close()));
+  });
+
+  // Ajustes
+  $('#set-currency').addEventListener('change', async (e) => {
+    state.currency = e.target.value;
+    await DB.setSetting('currency', state.currency);
+    makeFormatter();
+    renderAll();
+    toast('Moneda actualizada');
+  });
+  $('#set-theme').addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    applyTheme(b.dataset.theme);
+  });
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    if (currentThemePref() === 'system') applyTheme('system');
+  });
+  $('#btn-export').addEventListener('click', exportData);
+  $('#import-file').addEventListener('change', (e) => {
+    const f = e.target.files[0];
+    if (f) importData(f);
+    e.target.value = '';
+  });
+  $('#btn-reset').addEventListener('click', async () => {
+    const ok = await confirmDialog('Borrar todos los datos',
+      'Se eliminarán todos los movimientos y las categorías personalizadas. Esta acción no se puede deshacer.', 'Borrar todo');
+    if (!ok) return;
+    await DB.resetAll();
+    await loadData();
+    renderAll();
+    toast('Datos eliminados');
+  });
+
+  // Instalación PWA
+  let deferredPrompt = null;
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredPrompt = e;
+    $('#install-card').hidden = false;
+  });
+  $('#btn-install').addEventListener('click', async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    await deferredPrompt.userChoice;
+    deferredPrompt = null;
+    $('#install-card').hidden = true;
+  });
+  window.addEventListener('appinstalled', () => { $('#install-card').hidden = true; });
+}
+
+// ---------- Inicio ----------
+async function init() {
+  try {
+    await DB.openDB();
+    state.currency = await DB.getSetting('currency', 'MXN');
+  } catch (err) {
+    console.error(err);
+    toast('No se pudo abrir la base de datos local');
+    return;
+  }
+  makeFormatter();
+  $('#set-currency').value = state.currency;
+  applyTheme(currentThemePref());
+  bindEvents();
+  await loadData();
+  renderAll();
+  setView(location.hash.slice(1) || 'dashboard', false);
+
+  // Atajos desde el ícono de la app (?action=income|expense)
+  const action = new URLSearchParams(location.search).get('action');
+  if (action === 'income' || action === 'expense') {
+    history.replaceState(null, '', location.pathname + location.hash);
+    openTxDialog({ type: action });
+  }
+
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    navigator.serviceWorker.register('./sw.js').catch((e) => console.warn('SW no registrado', e));
+  }
+}
+
+init();
