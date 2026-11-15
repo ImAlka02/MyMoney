@@ -1,5 +1,5 @@
 // Service worker de MyMoney: guarda la app en caché para usarla sin conexión.
-const CACHE = 'mymoney-v3';
+const CACHE = 'mymoney-v4';
 const ASSETS = [
   './',
   './index.html',

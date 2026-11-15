@@ -267,6 +267,10 @@
         <div class="field">
           <span>Categoría</span>
           <div class="chip-picker" id="tx-categories"></div>
+        </div>
+        <div class="field" id="tx-budget-field" hidden>
+          <span>Presupuesto (opcional)</span>
+          <div class="chip-picker" id="tx-budgets"></div>
           <div class="budget-hint" id="tx-budget-hint" hidden></div>
         </div>
         <div class="field-row">
@@ -342,14 +346,14 @@
           <span class="currency-symbol" id="budget-currency">$</span>
           <input id="budget-amount" inputmode="decimal" autocomplete="off" placeholder="0.00" aria-label="Monto del presupuesto" required>
         </label>
-        <div class="field">
-          <span>Categoría de gasto</span>
-          <div class="chip-picker" id="budget-categories"></div>
-        </div>
         <label class="field">
-          <span>Nombre (opcional)</span>
-          <input type="text" id="budget-name" maxlength="40" placeholder="Ej. Despensa del mes">
+          <span>Nombre</span>
+          <input type="text" id="budget-name" maxlength="40" placeholder="Ej. Despensa, Vacaciones" required>
         </label>
+        <div class="field">
+          <span>Color</span>
+          <div class="swatches" id="budget-swatches"></div>
+        </div>
         <div class="field">
           <span>Periodo</span>
           <div class="segmented" id="budget-period">

@@ -32,11 +32,13 @@ const state = {
   editingCat: null,
   catType: 'expense',
   catColor: PALETTE[0],
-  catReturn: null, // 'tx' | 'budget' cuando la categoría se crea desde otro diálogo
+  txBudgetId: null,
+  catReturn: null,    // 'tx' cuando la categoría se crea desde el diálogo de movimiento
   // diálogo de presupuesto
   editingBudget: null,
-  budgetCategoryId: null,
+  budgetColor: PALETTE[2],
   budgetPeriod: 'monthly',
+  budgetReturn: null, // 'tx' cuando el presupuesto se crea desde el diálogo de movimiento
 };
 
 // ---------- Utilidades ----------
@@ -140,7 +142,18 @@ async function loadData() {
 }
 
 // ---------- Presupuestos ----------
-const budgetLabel = (b) => b.name || getCat(b.categoryId).name;
+// Un presupuesto tiene nombre y color propios; los gastos se vinculan a él con `budgetId`.
+// (Los presupuestos creados con la versión anterior traían `categoryId`: se usa como respaldo
+//  para mostrar nombre y color.)
+const legacyCat = (b) => (b.categoryId != null && state.catMap.has(b.categoryId) ? state.catMap.get(b.categoryId) : null);
+const budgetLabel = (b) => b.name || legacyCat(b)?.name || 'Presupuesto';
+const budgetColor = (b) => b.color || legacyCat(b)?.color || '#B8913E';
+const budgetById = (id) => (id == null ? null : state.budgets.find((b) => b.id === id) || null);
+
+/** Presupuestos a los que se puede asignar un gasto con esa fecha. */
+function budgetsAt(date) {
+  return state.budgets.filter((b) => b.period === 'monthly' || (date >= b.start && date <= b.end));
+}
 
 /** Rango de fechas [desde, hasta] que cubre el presupuesto para un mes dado. */
 function budgetRange(b, month = state.month) {
@@ -149,16 +162,16 @@ function budgetRange(b, month = state.month) {
   return [`${month}-01`, `${month}-${pad(new Date(y, m, 0).getDate())}`];
 }
 
-/** Cuánto se ha gastado de un presupuesto (gastos de su categoría dentro del rango). */
+/** Cuánto se ha gastado de un presupuesto (gastos vinculados a él dentro del rango). */
 function budgetStatus(b, month = state.month) {
   const [from, to] = budgetRange(b, month);
-  let spent = 0;
+  let spent = 0, count = 0;
   for (const t of state.transactions) {
-    if (t.type === 'expense' && t.categoryId === b.categoryId && t.date >= from && t.date <= to) spent += t.amount;
+    if (t.type === 'expense' && t.budgetId === b.id && t.date >= from && t.date <= to) { spent += t.amount; count++; }
   }
   const remaining = b.amount - spent;
   const pct = b.amount ? (spent / b.amount) * 100 : 0;
-  return { from, to, spent, remaining, pct, level: pct > 100 ? 'over' : pct >= 80 ? 'warn' : 'ok' };
+  return { from, to, spent, count, remaining, pct, level: pct > 100 ? 'over' : pct >= 80 ? 'warn' : 'ok' };
 }
 
 /** Presupuestos que aplican al mes visible (mensuales + por fechas que se cruzan con el mes). */
@@ -195,15 +208,16 @@ function renderAll() {
 }
 
 function budgetItemHTML(b, extraClass = '') {
-  const cat = getCat(b.categoryId);
+  const color = budgetColor(b);
+  const name = budgetLabel(b);
   const st = budgetStatus(b);
   return `
-    <div class="budget-item level-${st.level} ${extraClass}" data-budget="${b.id}" style="--c:${cat.color}" tabindex="0">
+    <div class="budget-item level-${st.level} ${extraClass}" data-budget="${b.id}" style="--c:${color}" tabindex="0">
       <div class="budget-top">
-        <div class="tx-avatar" style="background:${cat.color};color:${textOn(cat.color)}">${escapeHTML(initial(cat.name))}</div>
+        <div class="tx-avatar" style="background:${color};color:${textOn(color)}">${escapeHTML(initial(name))}</div>
         <div class="budget-info">
-          <div class="tx-title">${escapeHTML(budgetLabel(b))}</div>
-          <div class="tx-meta"><span class="cat-chip" style="--c:${cat.color}">${escapeHTML(cat.name)}</span><span>${periodLabel(b)}</span></div>
+          <div class="tx-title">${escapeHTML(name)}</div>
+          <div class="tx-meta"><span>${periodLabel(b)}</span><span>·</span><span>${st.count} ${st.count === 1 ? 'gasto' : 'gastos'}</span></div>
         </div>
         <div class="budget-remaining">
           <strong>${fmt(Math.abs(st.remaining))}</strong>
@@ -233,7 +247,7 @@ function renderBudgets() {
     <div><span class="eyebrow">${left >= 0 ? 'Disponible' : 'Excedido'}</span><strong class="${left < 0 ? 'over' : ''}">${fmt(Math.abs(left))}</strong></div>` : '';
   $('#budget-list').innerHTML = list.length
     ? list.map((b) => budgetItemHTML(b, 'card')).join('')
-    : `<div class="card" style="grid-column:1/-1">${emptyHTML('Aún no tienes presupuestos', 'Asigna un monto a una categoría y cada gasto con esa categoría se irá restando.')}</div>`;
+    : `<div class="card" style="grid-column:1/-1">${emptyHTML('Aún no tienes presupuestos', 'Crea uno y, al registrar un gasto, elige a qué presupuesto pertenece para que se vaya restando.')}</div>`;
 }
 
 function renderMonth() {
@@ -245,12 +259,16 @@ function txItemHTML(t, { showDate = false } = {}) {
   const cat = getCat(t.categoryId);
   const sign = t.type === 'income' ? '+' : '−';
   const date = showDate ? `<span>${parseDate(t.date).toLocaleDateString('es-MX', { day: 'numeric', month: 'short' })}</span>` : '';
+  const budget = t.type === 'expense' ? budgetById(t.budgetId) : null;
+  const budgetTag = budget
+    ? `<span class="budget-tag" style="--c:${budgetColor(budget)}"><svg viewBox="0 0 24 24"><path d="M21 12A9 9 0 1 1 12 3v9z"/></svg>${escapeHTML(budgetLabel(budget))}</span>`
+    : '';
   return `
     <li class="tx-item" data-id="${t.id}" style="--c:${cat.color};border-left-color:${cat.color}" tabindex="0">
       <div class="tx-avatar" style="background:${cat.color};color:${textOn(cat.color)}">${escapeHTML(initial(cat.name))}</div>
       <div class="tx-main">
         <div class="tx-title">${escapeHTML(t.note || cat.name)}</div>
-        <div class="tx-meta"><span class="cat-chip" style="--c:${cat.color}">${escapeHTML(cat.name)}</span>${date}</div>
+        <div class="tx-meta"><span class="cat-chip" style="--c:${cat.color}">${escapeHTML(cat.name)}</span>${budgetTag}${date}</div>
       </div>
       <div class="tx-amount ${t.type}">${sign}${fmt(t.amount)}<small>${t.type === 'income' ? 'Ingreso' : 'Gasto'}</small></div>
     </li>`;
@@ -427,6 +445,7 @@ function openTxDialog({ type = 'expense', tx = null } = {}) {
   state.editingTx = tx;
   state.txType = tx ? tx.type : type;
   state.txCategoryId = tx ? tx.categoryId : null;
+  state.txBudgetId = tx?.budgetId ?? null;
 
   $('#tx-dialog-title').textContent = tx ? 'Editar movimiento' : txTitle();
   $('#tx-amount').value = tx ? (tx.amount / 100).toFixed(2) : '';
@@ -437,7 +456,7 @@ function openTxDialog({ type = 'expense', tx = null } = {}) {
   $('#tx-delete').hidden = !tx;
   setSegmented($('#tx-type'), 'type', state.txType);
   renderTxCategories();
-  renderBudgetHint();
+  renderTxBudgets();
   autosizeAmount($('#tx-amount'));
 
   $('#tx-dialog').showModal();
@@ -463,40 +482,56 @@ function renderTxCategories() {
   $('#tx-categories').innerHTML = chipsHTML(cats, state.txCategoryId);
 }
 
-/** Muestra cuánto queda en los presupuestos de la categoría elegida y cómo queda tras este gasto. */
+/** Selector opcional de presupuesto: solo para gastos y solo presupuestos vigentes en la fecha. */
+function renderTxBudgets() {
+  const field = $('#tx-budget-field');
+  const date = $('#tx-date').value;
+  if (state.txType !== 'expense') { field.hidden = true; return; }
+  field.hidden = false;
+
+  const list = date ? budgetsAt(date) : state.budgets;
+  if (state.txBudgetId != null && !list.some((b) => b.id === state.txBudgetId)) state.txBudgetId = null;
+
+  $('#tx-budgets').innerHTML = `
+    <button type="button" class="chip-option none ${state.txBudgetId == null ? 'selected' : ''}" data-id="">Ninguno</button>` +
+    list.map((b) => {
+      const color = budgetColor(b);
+      return `<button type="button" class="chip-option ${b.id === state.txBudgetId ? 'selected' : ''}" data-id="${b.id}" style="--chip:${color}">
+        <i style="background:${color}"></i>${escapeHTML(budgetLabel(b))}
+      </button>`;
+    }).join('') + `
+    <button type="button" class="chip-option add" data-add>
+      <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Nuevo
+    </button>`;
+  renderBudgetHint();
+}
+
+/** Muestra cuánto queda en el presupuesto elegido y cómo queda tras este gasto. */
 function renderBudgetHint() {
   const box = $('#tx-budget-hint');
   const date = $('#tx-date').value;
-  const catId = state.txCategoryId;
-  if (state.txType !== 'expense' || catId == null || !date) { box.hidden = true; return; }
-
-  const applicable = state.budgets.filter((b) =>
-    b.categoryId === catId && (b.period === 'monthly' || (date >= b.start && date <= b.end)));
-  if (!applicable.length) { box.hidden = true; return; }
+  const b = budgetById(state.txBudgetId);
+  if (state.txType !== 'expense' || !b || !date) { box.hidden = true; return; }
 
   const amount = parseAmount($('#tx-amount').value) || 0;
+  const st = budgetStatus(b, date.slice(0, 7));
+  let spent = st.spent;
+  // Al editar, no contar dos veces el monto original de este mismo gasto
   const editing = state.editingTx;
-  const cat = getCat(catId);
-  box.style.setProperty('--c', cat.color);
-  box.innerHTML = applicable.map((b) => {
-    const st = budgetStatus(b, date.slice(0, 7));
-    let spent = st.spent;
-    // Al editar, no contar dos veces el monto original de este mismo gasto
-    if (editing && editing.type === 'expense' && editing.categoryId === b.categoryId &&
-        editing.date >= st.from && editing.date <= st.to) spent -= editing.amount;
-    const available = b.amount - spent;
-    const after = available - amount;
-    const pct = Math.min(((spent + amount) / b.amount) * 100, 100);
-    const afterTxt = amount > 0
-      ? (after >= 0 ? `Después de este gasto quedarán <b>${fmt(after)}</b>.`
-                    : `<span class="over">Excederás el presupuesto por ${fmt(-after)}.</span>`)
-      : '';
-    return `<div>
-      <div><b>${escapeHTML(budgetLabel(b))}</b> · ${available >= 0 ? `disponible ${fmt(available)}` : `<span class="over">excedido por ${fmt(-available)}</span>`} de ${fmt(b.amount)}</div>
-      ${afterTxt ? `<div>${afterTxt}</div>` : ''}
-      <div class="budget-bar"><i style="width:${pct}%;${after < 0 ? 'background:var(--danger)' : ''}"></i></div>
-    </div>`;
-  }).join('');
+  if (editing && editing.type === 'expense' && editing.budgetId === b.id &&
+      editing.date >= st.from && editing.date <= st.to) spent -= editing.amount;
+  const available = b.amount - spent;
+  const after = available - amount;
+  const pct = Math.min(((spent + amount) / b.amount) * 100, 100);
+  const afterTxt = amount > 0
+    ? (after >= 0 ? `Después de este gasto quedarán <b>${fmt(after)}</b>.`
+                  : `<span class="over">Excederás el presupuesto por ${fmt(-after)}.</span>`)
+    : '';
+  box.style.setProperty('--c', budgetColor(b));
+  box.innerHTML = `
+    <div><b>${escapeHTML(budgetLabel(b))}</b> · ${available >= 0 ? `disponible ${fmt(available)}` : `<span class="over">excedido por ${fmt(-available)}</span>`} de ${fmt(b.amount)}</div>
+    ${afterTxt ? `<div>${afterTxt}</div>` : ''}
+    <div class="budget-bar"><i style="width:${pct}%;${after < 0 ? 'background:var(--danger)' : ''}"></i></div>`;
   box.hidden = false;
 }
 
@@ -514,6 +549,7 @@ async function saveTx(e) {
     type: state.txType,
     amount,
     categoryId: state.txCategoryId,
+    budgetId: state.txType === 'expense' ? state.txBudgetId : null, // solo los gastos usan presupuesto
     date,
     note: $('#tx-note').value.trim(),
     updatedAt: Date.now(),
@@ -526,31 +562,28 @@ async function saveTx(e) {
   renderAll();
 
   let msg = state.editingTx ? 'Movimiento actualizado' : (tx.type === 'income' ? 'Ingreso registrado' : 'Gasto registrado');
-  if (tx.type === 'expense') {
-    const exceeded = state.budgets.find((b) => b.categoryId === tx.categoryId &&
-      (b.period === 'monthly' || (date >= b.start && date <= b.end)) &&
-      budgetStatus(b, date.slice(0, 7)).remaining < 0);
-    if (exceeded) msg += ` · Excediste “${budgetLabel(exceeded)}”`;
-  }
+  const linked = budgetById(tx.budgetId);
+  if (linked && budgetStatus(linked, date.slice(0, 7)).remaining < 0) msg += ` · Excediste “${budgetLabel(linked)}”`;
   toast(msg);
 }
 
 // ---------- Diálogo de presupuesto ----------
-function openBudgetDialog({ budget = null, categoryId = null } = {}) {
+function openBudgetDialog({ budget = null, returnTo = null } = {}) {
   state.editingBudget = budget;
-  state.budgetCategoryId = budget ? budget.categoryId : categoryId;
+  state.budgetColor = budget ? budgetColor(budget) : PALETTE[Math.floor(Math.random() * PALETTE.length)];
   state.budgetPeriod = budget ? budget.period : 'monthly';
+  state.budgetReturn = returnTo;
 
   const [, monthEnd] = budgetRange({ period: 'monthly' }, monthKey(new Date()));
   $('#budget-dialog-title').textContent = budget ? 'Editar presupuesto' : 'Nuevo presupuesto';
   $('#budget-amount').value = budget ? (budget.amount / 100).toFixed(2) : '';
-  $('#budget-name').value = budget?.name || '';
+  $('#budget-name').value = budget ? budgetLabel(budget) : '';
   $('#budget-start').value = budget?.start || todayStr();
   $('#budget-end').value = budget?.end || monthEnd;
   $('#budget-currency').textContent = currencySymbol();
   $('#budget-error').textContent = '';
   $('#budget-delete').hidden = !budget;
-  renderBudgetCategories();
+  renderSwatches('#budget-swatches', state.budgetColor);
   setBudgetPeriod(state.budgetPeriod);
   autosizeAmount($('#budget-amount'));
 
@@ -558,18 +591,13 @@ function openBudgetDialog({ budget = null, categoryId = null } = {}) {
   if (!matchMedia('(pointer: coarse)').matches) $('#budget-amount').focus();
 }
 
-function renderBudgetCategories() {
-  const cats = state.categories.filter((c) => catFits(c, 'expense'));
-  $('#budget-categories').innerHTML = chipsHTML(cats, state.budgetCategoryId);
-}
-
 function setBudgetPeriod(period) {
   state.budgetPeriod = period;
   setSegmented($('#budget-period'), 'period', period);
   $('#budget-range').hidden = period !== 'range';
   $('#budget-period-help').textContent = period === 'monthly'
-    ? 'Se reinicia cada mes: se restan los gastos de la categoría en ese mes.'
-    : 'Se restan los gastos de la categoría entre estas fechas.';
+    ? 'Se reinicia cada mes: se restan los gastos que asignes a este presupuesto en ese mes.'
+    : 'Se restan los gastos que asignes a este presupuesto entre estas fechas.';
 }
 
 async function saveBudget(e) {
@@ -579,29 +607,36 @@ async function saveBudget(e) {
   const period = state.budgetPeriod;
   const start = $('#budget-start').value;
   const end = $('#budget-end').value;
+  const name = $('#budget-name').value.trim();
   if (!(amount > 0)) { err.textContent = 'Ingresa un monto mayor a 0.'; $('#budget-amount').focus(); return; }
-  if (state.budgetCategoryId == null) { err.textContent = 'Elige la categoría del presupuesto.'; return; }
-  if (period === 'range' && (!start || !end)) { err.textContent = 'Elige las fechas de inicio y fin.'; return; }
-  if (period === 'range' && start > end) { err.textContent = 'La fecha final debe ser posterior a la inicial.'; return; }
-  if (period === 'monthly' && state.budgets.some((b) =>
-    b.id !== state.editingBudget?.id && b.period === 'monthly' && b.categoryId === state.budgetCategoryId)) {
-    err.textContent = 'Ya hay un presupuesto mensual para esta categoría.';
+  if (!name) { err.textContent = 'Escribe un nombre para el presupuesto.'; $('#budget-name').focus(); return; }
+  if (state.budgets.some((b) => b.id !== state.editingBudget?.id && budgetLabel(b).toLowerCase() === name.toLowerCase())) {
+    err.textContent = 'Ya existe un presupuesto con ese nombre.';
     return;
   }
+  if (period === 'range' && (!start || !end)) { err.textContent = 'Elige las fechas de inicio y fin.'; return; }
+  if (period === 'range' && start > end) { err.textContent = 'La fecha final debe ser posterior a la inicial.'; return; }
 
+  const { categoryId, ...base } = state.editingBudget || { createdAt: Date.now() }; // ya no se usa categoryId
   const budget = {
-    ...(state.editingBudget || { createdAt: Date.now() }),
-    name: $('#budget-name').value.trim(),
-    categoryId: state.budgetCategoryId,
+    ...base,
+    name,
+    color: state.budgetColor,
     amount,
     period,
     start: period === 'range' ? start : null,
     end: period === 'range' ? end : null,
     updatedAt: Date.now(),
   };
-  await DB.put('budgets', budget);
+  const id = await DB.put('budgets', budget);
   $('#budget-dialog').close();
   await loadData();
+
+  // Si se creó desde el formulario de gasto, se deja seleccionado ahí
+  if (state.budgetReturn === 'tx') {
+    state.txBudgetId = id;
+    renderTxBudgets();
+  }
   renderAll();
   toast(state.editingBudget ? 'Presupuesto actualizado' : 'Presupuesto creado');
 }
@@ -609,10 +644,14 @@ async function saveBudget(e) {
 async function deleteBudget() {
   const b = state.editingBudget;
   if (!b) return;
+  const linked = state.transactions.filter((t) => t.budgetId === b.id).length;
   const ok = await confirmDialog('Eliminar presupuesto',
-    `Se eliminará el presupuesto “${budgetLabel(b)}”. Tus gastos no se borran.`, 'Eliminar');
+    `Se eliminará el presupuesto “${budgetLabel(b)}”.` +
+    (linked === 1 ? ' Su gasto vinculado se conserva; solo quedará sin presupuesto.'
+      : linked > 1 ? ` Sus ${linked} gastos vinculados se conservan; solo quedarán sin presupuesto.` : ''),
+    'Eliminar');
   if (!ok) return;
-  await DB.remove('budgets', b.id);
+  await DB.deleteBudget(b.id);
   $('#budget-dialog').close();
   await loadData();
   renderAll();
@@ -649,14 +688,36 @@ function openCatDialog({ cat = null, type = 'expense', returnTo = null } = {}) {
   if (!matchMedia('(pointer: coarse)').matches) $('#cat-name').focus();
 }
 
-function renderSwatches() {
-  const custom = !PALETTE.includes(state.catColor.toUpperCase()) && !PALETTE.includes(state.catColor);
-  $('#cat-swatches').innerHTML = PALETTE.map((c) =>
-    `<button type="button" class="swatch ${c.toLowerCase() === state.catColor.toLowerCase() ? 'selected' : ''}" data-color="${c}" style="background:${c}" aria-label="Color ${c}"></button>`
+/** Paleta de colores + selector personalizado (categorías y presupuestos). */
+function renderSwatches(sel = '#cat-swatches', color = state.catColor) {
+  const custom = !PALETTE.some((c) => c.toLowerCase() === color.toLowerCase());
+  $(sel).innerHTML = PALETTE.map((c) =>
+    `<button type="button" class="swatch ${c.toLowerCase() === color.toLowerCase() ? 'selected' : ''}" data-color="${c}" style="background:${c}" aria-label="Color ${c}"></button>`
   ).join('') + `
-    <label class="swatch-custom ${custom ? 'selected' : ''}" title="Color personalizado" ${custom ? `style="background:${state.catColor}"` : ''}>
-      <input type="color" id="cat-color-input" value="${state.catColor}" aria-label="Color personalizado">
+    <label class="swatch-custom ${custom ? 'selected' : ''}" title="Color personalizado" ${custom ? `style="background:${color}"` : ''}>
+      <input type="color" value="${color}" aria-label="Color personalizado">
     </label>`;
+}
+
+/** Conecta clics en la paleta y el selector personalizado; onPick recibe el color elegido. */
+function bindSwatches(sel, onPick) {
+  const box = $(sel);
+  box.addEventListener('click', (e) => {
+    const b = e.target.closest('.swatch'); if (!b) return;
+    onPick(b.dataset.color);
+    $$('.swatch', box).forEach((s) => s.classList.toggle('selected', s === b));
+    const lbl = $('.swatch-custom', box);
+    lbl.classList.remove('selected');
+    lbl.style.background = '';
+  });
+  box.addEventListener('input', (e) => {
+    if (e.target.type !== 'color') return;
+    onPick(e.target.value);
+    $$('.swatch', box).forEach((s) => s.classList.remove('selected'));
+    const lbl = e.target.parentElement;
+    lbl.classList.add('selected');
+    lbl.style.background = e.target.value;
+  });
 }
 
 function updateCatPreview() {
@@ -688,10 +749,6 @@ async function saveCat(e) {
   if (state.catReturn === 'tx') {
     if (catFits(cat, state.txType)) state.txCategoryId = id;
     renderTxCategories();
-    renderBudgetHint();
-  } else if (state.catReturn === 'budget') {
-    if (catFits(cat, 'expense')) state.budgetCategoryId = id;
-    renderBudgetCategories();
   }
   renderAll();
   toast(state.editingCat ? 'Categoría actualizada' : 'Categoría creada');
@@ -701,11 +758,9 @@ async function deleteCat() {
   const cat = state.editingCat;
   if (!cat) return;
   const used = state.transactions.filter((t) => t.categoryId === cat.id).length;
-  const budgets = state.budgets.filter((b) => b.categoryId === cat.id).length;
-  let msg = used
+  const msg = used
     ? `“${cat.name}” se usa en ${used} ${used === 1 ? 'movimiento' : 'movimientos'}. Quedarán como “Sin categoría”.`
     : `Se eliminará la categoría “${cat.name}”.`;
-  if (budgets) msg += ` También se eliminará${budgets === 1 ? ' su presupuesto' : `n sus ${budgets} presupuestos`}.`;
   const ok = await confirmDialog('Eliminar categoría', msg, 'Eliminar');
   if (!ok) return;
   await DB.deleteCategory(cat.id);
@@ -828,7 +883,7 @@ function bindEvents() {
     setSegmented(e.currentTarget, 'type', state.txType);
     if (!state.editingTx) $('#tx-dialog-title').textContent = txTitle();
     renderTxCategories();
-    renderBudgetHint();
+    renderTxBudgets();
   });
   $('#tx-categories').addEventListener('click', (e) => {
     const b = e.target.closest('button'); if (!b) return;
@@ -836,11 +891,17 @@ function bindEvents() {
     state.txCategoryId = Number(b.dataset.id);
     $('#tx-error').textContent = '';
     $$('.chip-option', e.currentTarget).forEach((c) => c.classList.toggle('selected', c === b));
+  });
+  $('#tx-budgets').addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.hasAttribute('data-add')) return openBudgetDialog({ returnTo: 'tx' });
+    state.txBudgetId = b.dataset.id ? Number(b.dataset.id) : null;
+    $$('.chip-option', e.currentTarget).forEach((c) => c.classList.toggle('selected', c === b));
     renderBudgetHint();
   });
   $('#tx-amount').addEventListener('input', (e) => { autosizeAmount(e.target); renderBudgetHint(); });
   $('#budget-amount').addEventListener('input', (e) => autosizeAmount(e.target));
-  $('#tx-date').addEventListener('change', renderBudgetHint);
+  $('#tx-date').addEventListener('change', renderTxBudgets);
 
   // Presupuestos
   $('#btn-new-budget').addEventListener('click', () => openBudgetDialog());
@@ -860,13 +921,7 @@ function bindEvents() {
     const b = e.target.closest('button'); if (!b) return;
     setBudgetPeriod(b.dataset.period);
   });
-  $('#budget-categories').addEventListener('click', (e) => {
-    const b = e.target.closest('button'); if (!b) return;
-    if (b.hasAttribute('data-add')) return openCatDialog({ type: 'expense', returnTo: 'budget' });
-    state.budgetCategoryId = Number(b.dataset.id);
-    $('#budget-error').textContent = '';
-    $$('.chip-option', e.currentTarget).forEach((c) => c.classList.toggle('selected', c === b));
-  });
+  bindSwatches('#budget-swatches', (color) => { state.budgetColor = color; });
 
   // Diálogo categoría
   $('#cat-form').addEventListener('submit', saveCat);
@@ -877,21 +932,7 @@ function bindEvents() {
     state.catType = b.dataset.type;
     setSegmented(e.currentTarget, 'type', state.catType);
   });
-  $('#cat-swatches').addEventListener('click', (e) => {
-    const b = e.target.closest('.swatch'); if (!b) return;
-    state.catColor = b.dataset.color;
-    renderSwatches();
-    updateCatPreview();
-  });
-  $('#cat-swatches').addEventListener('input', (e) => {
-    if (e.target.id !== 'cat-color-input') return;
-    state.catColor = e.target.value;
-    $$('.swatch', e.currentTarget).forEach((s) => s.classList.remove('selected'));
-    const lbl = e.target.parentElement;
-    lbl.classList.add('selected');
-    lbl.style.background = state.catColor;
-    updateCatPreview();
-  });
+  bindSwatches('#cat-swatches', (color) => { state.catColor = color; updateCatPreview(); });
 
   // Cerrar diálogos (botones y clic en el fondo)
   $$('dialog').forEach((dlg) => {

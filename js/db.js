@@ -122,14 +122,24 @@ export async function setSetting(key, value) {
 
 // --- Operaciones compuestas ---
 
-/** Elimina una categoría, sus presupuestos y deja sus movimientos como "Sin categoría". */
+/** Elimina un presupuesto y desvincula los gastos que lo usaban (los gastos no se borran). */
+export async function deleteBudget(id) {
+  const db = await openDB();
+  const tx = db.transaction(['budgets', 'transactions'], 'readwrite');
+  tx.objectStore('transactions').openCursor().onsuccess = (e) => {
+    const cursor = e.target.result;
+    if (!cursor) return;
+    if (cursor.value.budgetId === id) cursor.update({ ...cursor.value, budgetId: null });
+    cursor.continue();
+  };
+  tx.objectStore('budgets').delete(id);
+  await txDone(tx);
+}
+
+/** Elimina una categoría y deja sus movimientos como "Sin categoría". */
 export async function deleteCategory(id) {
   const db = await openDB();
-  const tx = db.transaction(['categories', 'transactions', 'budgets'], 'readwrite');
-  tx.objectStore('budgets').index('categoryId').openCursor(IDBKeyRange.only(id)).onsuccess = (e) => {
-    const cursor = e.target.result;
-    if (cursor) { cursor.delete(); cursor.continue(); }
-  };
+  const tx = db.transaction(['categories', 'transactions'], 'readwrite');
   const txStore = tx.objectStore('transactions');
   const idx = txStore.index('categoryId');
   idx.openCursor(IDBKeyRange.only(id)).onsuccess = (e) => {
