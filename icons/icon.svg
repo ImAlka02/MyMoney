@@ -1,5 +1,23 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="112" fill="#111111"/>
-  <circle cx="256" cy="256" r="150" fill="none" stroke="#C6A35A" stroke-width="22"/>
-  <path d="M310 196c-10-22-32-34-56-34-32 0-56 18-56 44 0 58 116 34 116 94 0 28-26 48-60 48-28 0-52-14-62-38M256 136v240" fill="none" stroke="#C6A35A" stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect width="512" height="512" rx="112" fill="#2A2A2A"/>
+  <g id="pig">
+    <!-- Moneda -->
+    <circle cx="256" cy="146" r="40" fill="#D6AE4F"/>
+    <!-- Cola -->
+    <path d="M104 300c-22-6-30-30-16-50" fill="none" stroke="#D6AE4F" stroke-width="15" stroke-linecap="round"/>
+    <!-- Oreja -->
+    <path d="M322 204l40-32-2 52z" fill="#D6AE4F" stroke="#D6AE4F" stroke-width="18" stroke-linejoin="round"/>
+    <!-- Patas -->
+    <rect x="148" y="360" width="54" height="72" rx="16" fill="#D6AE4F"/>
+    <rect x="290" y="360" width="54" height="72" rx="16" fill="#D6AE4F"/>
+    <!-- Cuerpo y hocico -->
+    <ellipse cx="248" cy="298" rx="152" ry="118" fill="#D6AE4F"/>
+    <rect x="366" y="260" width="62" height="66" rx="22" fill="#D6AE4F"/>
+    <!-- Ranura, ojo y fosa nasal -->
+    <rect x="204" y="186" width="104" height="12" rx="6" fill="#2A2A2A"/>
+    <circle cx="346" cy="258" r="11" fill="#2A2A2A"/>
+    <ellipse cx="414" cy="293" rx="5" ry="10" fill="#2A2A2A"/>
+    <!-- Signo de pesos -->
+    <path d="M281 266c-8-15-24-23-42-23-24 0-41 13-41 31 0 42 87 25 87 68 0 21-19 35-46 35-21 0-39-10-47-27M239 226v166" fill="none" stroke="#2A2A2A" stroke-width="25" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
 </svg>

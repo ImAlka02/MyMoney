@@ -8,7 +8,9 @@ const PALETTE = [
   '#C0623B', '#D08C3A', '#B8913E', '#4F7942', '#2F8F83', '#3B6E8F', '#5A7D9A',
   '#6B5B95', '#8E5A9B', '#C07A9A', '#B5485D', '#7A5C45', '#7A7873', '#2B2B2B',
 ];
-const VIEW_TITLES = { dashboard: 'Resumen', transactions: 'Movimientos', categories: 'Categorías', budgets: 'Presupuestos', settings: 'Ajustes' };
+const VIEW_TITLES = { dashboard: 'Resumen', transactions: 'Movimientos', wallets: 'Billeteras', categories: 'Categorías', budgets: 'Presupuestos', settings: 'Ajustes' };
+const ICON_CASH = '<svg viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 10v4M18 10v4"/></svg>';
+const ICON_APP = '<svg viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M11 18h2"/></svg>';
 const MONTH_VIEWS = ['dashboard', 'transactions', 'budgets'];
 
 const state = {
@@ -18,10 +20,13 @@ const state = {
   categories: [],
   transactions: [],
   budgets: [],
+  wallets: [],
   catMap: new Map(),
+  walletInfo: new Map(), // id → { balance, interest, dailyInterest } calculado en loadData
   breakdownType: 'expense',
   filterType: 'all',
   filterCat: 'all',
+  filterWallet: 'all',
   search: '',
   catTab: 'expense',
   // diálogo de movimiento
@@ -39,6 +44,12 @@ const state = {
   budgetColor: PALETTE[2],
   budgetPeriod: 'monthly',
   budgetReturn: null, // 'tx' cuando el presupuesto se crea desde el diálogo de movimiento
+  txWalletId: null,
+  // diálogo de billetera
+  editingWallet: null,
+  walletKind: 'cash',
+  walletColor: PALETTE[3],
+  walletRatePeriod: 'annual',
 };
 
 // ---------- Utilidades ----------
@@ -130,15 +141,83 @@ function confirmDialog(title, text, okLabel = 'Confirmar') {
 
 // ---------- Datos ----------
 async function loadData() {
-  const [categories, transactions, budgets] = await Promise.all([
-    DB.getAll('categories'), DB.getAll('transactions'), DB.getAll('budgets'),
+  const [categories, transactions, budgets, wallets] = await Promise.all([
+    DB.getAll('categories'), DB.getAll('transactions'), DB.getAll('budgets'), DB.getAll('wallets'),
   ]);
+  state.wallets = wallets.sort((a, b) => a.createdAt - b.createdAt);
   state.categories = categories.sort((a, b) => a.name.localeCompare(b.name, 'es'));
   state.catMap = new Map(categories.map((c) => [c.id, c]));
   state.transactions = sortTx(transactions);
   state.budgets = budgets.sort((a, b) =>
     (a.period === b.period ? 0 : a.period === 'monthly' ? -1 : 1) ||
     budgetLabel(a).localeCompare(budgetLabel(b), 'es'));
+  state.walletInfo = new Map(state.wallets.map((w) => [w.id, walletStatus(w)]));
+}
+
+// ---------- Billeteras ----------
+// Saldo = saldo inicial + ingresos − gastos + intereses.
+// Los intereses no se guardan como movimientos: se calculan día por día (interés compuesto)
+// desde la fecha "desde" de la billetera hasta ayer, sobre el saldo de cada día.
+const walletById = (id) => state.wallets.find((w) => w.id === id) || null;
+const walletKindLabel = (w) => (w.kind === 'app' ? (w.institution || 'Banco / App') : 'Efectivo');
+
+function addDays(dateStr, n) {
+  const d = parseDate(dateStr);
+  d.setDate(d.getDate() + n);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** Tasa diaria (fracción) de la billetera, o 0 si no genera intereses. */
+function walletDailyRate(w) {
+  const i = w.interest;
+  if (w.kind !== 'app' || !i || !(i.rate > 0)) return 0;
+  return i.period === 'daily' ? i.rate / 100 : i.rate / 100 / 365;
+}
+
+function walletStatus(w) {
+  const today = todayStr();
+  const own = state.transactions.filter((t) => t.walletId === w.id);
+  const effect = (t) => (t.type === 'income' ? t.amount : -t.amount);
+  let balance = w.initialBalance || 0;
+  let interest = 0;
+  const rate = walletDailyRate(w);
+
+  if (!rate) {
+    for (const t of own) balance += effect(t);
+  } else {
+    // Movimientos agrupados por día
+    const byDay = new Map();
+    for (const t of own) byDay.set(t.date, (byDay.get(t.date) || 0) + effect(t));
+    const since = w.interest.since || today;
+    // Lo anterior a "desde" entra completo al saldo inicial del cálculo
+    for (const [date, amt] of byDay) if (date < since) balance += amt;
+    // Cada día cerrado: aplica sus movimientos y luego el interés sobre el saldo del día
+    for (let d = since; d < today; d = addDays(d, 1)) {
+      balance += byDay.get(d) || 0;
+      if (balance > 0) {
+        const gain = balance * rate;
+        balance += gain;
+        interest += gain;
+      }
+    }
+    // Hoy (aún sin interés) y fechas futuras
+    for (const [date, amt] of byDay) if (date >= today && date >= since) balance += amt;
+  }
+  return { balance, interest, dailyInterest: balance > 0 ? balance * rate : 0, rate };
+}
+
+const walletBalance = (id) => state.walletInfo.get(id)?.balance ?? 0;
+function totalBalance() {
+  let sum = 0;
+  for (const info of state.walletInfo.values()) sum += info.balance;
+  return sum;
+}
+
+/** Tasa como texto: "14.5% anual" / "0.04% diario". */
+function rateLabel(w) {
+  if (!walletDailyRate(w)) return '';
+  const r = w.interest.rate.toLocaleString('es-MX', { maximumFractionDigits: 4 });
+  return `${r}% ${w.interest.period === 'daily' ? 'diario' : 'anual'}`;
 }
 
 // ---------- Presupuestos ----------
@@ -205,6 +284,48 @@ function renderAll() {
   renderTransactions();
   renderCategories();
   renderBudgets();
+  renderWallets();
+}
+
+function walletCardHTML(w) {
+  const info = state.walletInfo.get(w.id) || { balance: 0, interest: 0, dailyInterest: 0 };
+  const icon = w.kind === 'app' ? ICON_APP : ICON_CASH;
+  const hasInterest = walletDailyRate(w) > 0;
+  return `
+    <div class="card wallet-card" data-wallet="${w.id}" style="--c:${w.color}" tabindex="0">
+      <div class="wallet-top">
+        <div class="tx-avatar" style="background:${w.color};color:${textOn(w.color)}">${icon}</div>
+        <div class="budget-info">
+          <div class="tx-title">${escapeHTML(w.name)}</div>
+          <div class="tx-meta"><span>${escapeHTML(walletKindLabel(w))}</span></div>
+        </div>
+      </div>
+      <div class="wallet-balance ${info.balance < 0 ? 'negative' : ''}">${fmt(info.balance)}</div>
+      ${hasInterest ? `<div class="wallet-foot">
+        <span class="interest-badge">+${fmt(info.dailyInterest)} / día</span>
+        <span>${rateLabel(w)}</span>
+        <span>Ganado: ${fmt(info.interest)}</span>
+      </div>` : ''}
+    </div>`;
+}
+
+function renderWallets() {
+  const cards = state.wallets.map(walletCardHTML).join('');
+  $('#dash-wallets').innerHTML = cards;
+  $('#wallet-grid').innerHTML = cards;
+
+  let cash = 0, apps = 0, interest = 0;
+  for (const w of state.wallets) {
+    const info = state.walletInfo.get(w.id);
+    if (!info) continue;
+    if (w.kind === 'app') apps += info.balance; else cash += info.balance;
+    interest += info.interest;
+  }
+  $('#wallet-overview').innerHTML = `
+    <div><span class="eyebrow">Total</span><strong>${fmt(cash + apps)}</strong></div>
+    <div><span class="eyebrow">Efectivo</span><strong>${fmt(cash)}</strong></div>
+    <div><span class="eyebrow">Bancos / Apps</span><strong>${fmt(apps)}</strong></div>
+    ${interest > 0 ? `<div><span class="eyebrow">Intereses ganados</span><strong class="gold-text">${fmt(interest)}</strong></div>` : ''}`;
 }
 
 function budgetItemHTML(b, extraClass = '') {
@@ -268,10 +389,17 @@ function txItemHTML(t, { showDate = false } = {}) {
       <div class="tx-avatar" style="background:${cat.color};color:${textOn(cat.color)}">${escapeHTML(initial(cat.name))}</div>
       <div class="tx-main">
         <div class="tx-title">${escapeHTML(t.note || cat.name)}</div>
-        <div class="tx-meta"><span class="cat-chip" style="--c:${cat.color}">${escapeHTML(cat.name)}</span>${budgetTag}${date}</div>
+        <div class="tx-meta"><span class="cat-chip" style="--c:${cat.color}">${escapeHTML(cat.name)}</span>${budgetTag}${walletTag(t)}${date}</div>
       </div>
       <div class="tx-amount ${t.type}">${sign}${fmt(t.amount)}<small>${t.type === 'income' ? 'Ingreso' : 'Gasto'}</small></div>
     </li>`;
+}
+
+/** Nombre de la billetera en la lista (solo si hay más de una). */
+function walletTag(t) {
+  if (state.wallets.length < 2) return '';
+  const w = walletById(t.walletId);
+  return w ? `<span class="wallet-tag"><i style="background:${w.color}"></i>${escapeHTML(w.name)}</span>` : '';
 }
 
 function emptyHTML(title, sub) {
@@ -281,13 +409,19 @@ function emptyHTML(title, sub) {
 }
 
 function renderDashboard() {
-  const all = totals(state.transactions);
   const month = monthTransactions();
   const m = totals(month);
 
+  // Saldo total = suma de todas las billeteras (incluye saldos iniciales e intereses)
+  const grand = totalBalance();
   const bal = $('#balance-total');
-  bal.textContent = fmt(all.net);
-  bal.classList.toggle('negative', all.net < 0);
+  bal.textContent = fmt(grand);
+  bal.classList.toggle('negative', grand < 0);
+  let daily = 0;
+  for (const info of state.walletInfo.values()) daily += info.dailyInterest;
+  const n = state.wallets.length;
+  $('#balance-sub').innerHTML = `En ${n} ${n === 1 ? 'billetera' : 'billeteras'}` +
+    (daily > 0 ? ` · intereses <b>+${fmt(daily)}</b> / día` : '');
   $('#month-income').textContent = fmt(m.income);
   $('#month-expense').textContent = fmt(m.expense);
 
@@ -357,13 +491,22 @@ function renderTransactions() {
     `<option value="none">Sin categoría</option>`;
   sel.value = state.filterCat;
 
+  // opciones del filtro de billeteras
+  const wsel = $('#filter-wallet');
+  if (state.filterWallet !== 'all' && !walletById(Number(state.filterWallet))) state.filterWallet = 'all';
+  wsel.innerHTML = `<option value="all">Todas las billeteras</option>` +
+    state.wallets.map((w) => `<option value="${w.id}">${escapeHTML(w.name)}</option>`).join('');
+  wsel.value = state.filterWallet;
+  wsel.hidden = state.wallets.length < 2;
+
   const q = state.search.trim().toLowerCase();
   const list = monthTransactions().filter((t) => {
     if (state.filterType !== 'all' && t.type !== state.filterType) return false;
+    if (state.filterWallet !== 'all' && String(t.walletId) !== state.filterWallet) return false;
     if (state.filterCat === 'none' && t.categoryId != null && state.catMap.has(t.categoryId)) return false;
     if (state.filterCat !== 'all' && state.filterCat !== 'none' && String(t.categoryId) !== state.filterCat) return false;
     if (q) {
-      const hay = `${t.note || ''} ${getCat(t.categoryId).name}`.toLowerCase();
+      const hay = `${t.note || ''} ${getCat(t.categoryId).name} ${walletById(t.walletId)?.name || ''}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -376,7 +519,7 @@ function renderTransactions() {
     <div class="card"><p class="eyebrow">Gastos</p><strong>−${fmt(tot.expense)}</strong></div>`;
 
   if (!list.length) {
-    $('#tx-groups').innerHTML = `<div class="card">${emptyHTML('No hay movimientos', q || state.filterType !== 'all' || state.filterCat !== 'all' ? 'Prueba con otros filtros.' : 'Registra tu primer ingreso o gasto de este mes.')}</div>`;
+    $('#tx-groups').innerHTML = `<div class="card">${emptyHTML('No hay movimientos', q || state.filterType !== 'all' || state.filterCat !== 'all' || state.filterWallet !== 'all' ? 'Prueba con otros filtros.' : 'Registra tu primer ingreso o gasto de este mes.')}</div>`;
     return;
   }
 
@@ -446,6 +589,7 @@ function openTxDialog({ type = 'expense', tx = null } = {}) {
   state.txType = tx ? tx.type : type;
   state.txCategoryId = tx ? tx.categoryId : null;
   state.txBudgetId = tx?.budgetId ?? null;
+  state.txWalletId = tx?.walletId ?? defaultWalletId();
 
   $('#tx-dialog-title').textContent = tx ? 'Editar movimiento' : txTitle();
   $('#tx-amount').value = tx ? (tx.amount / 100).toFixed(2) : '';
@@ -455,6 +599,7 @@ function openTxDialog({ type = 'expense', tx = null } = {}) {
   $('#tx-error').textContent = '';
   $('#tx-delete').hidden = !tx;
   setSegmented($('#tx-type'), 'type', state.txType);
+  renderTxWallets();
   renderTxCategories();
   renderTxBudgets();
   autosizeAmount($('#tx-amount'));
@@ -480,6 +625,42 @@ function renderTxCategories() {
   const cats = state.categories.filter((c) => catFits(c, state.txType));
   if (state.txCategoryId != null && !cats.some((c) => c.id === state.txCategoryId)) state.txCategoryId = null;
   $('#tx-categories').innerHTML = chipsHTML(cats, state.txCategoryId);
+}
+
+/** Última billetera usada en este dispositivo (o la primera). */
+function defaultWalletId() {
+  let last = null;
+  try { last = Number(localStorage.getItem('mm-last-wallet')); } catch { /* sin almacenamiento */ }
+  return walletById(last)?.id ?? state.wallets[0]?.id ?? null;
+}
+
+function renderTxWallets() {
+  if (!walletById(state.txWalletId)) state.txWalletId = state.wallets[0]?.id ?? null;
+  $('#tx-wallets').innerHTML = state.wallets.map((w) => `
+    <button type="button" class="chip-option ${w.id === state.txWalletId ? 'selected' : ''}" data-id="${w.id}" style="--chip:${w.color}">
+      <i style="background:${w.color}"></i>${escapeHTML(w.name)}
+    </button>`).join('');
+  renderWalletHint();
+}
+
+/** Saldo de la billetera elegida y cómo queda con este movimiento. */
+function renderWalletHint() {
+  const hint = $('#tx-wallet-hint');
+  const w = walletById(state.txWalletId);
+  if (!w) { hint.textContent = ''; return; }
+  let available = walletBalance(w.id);
+  // Al editar, quitar el efecto original de este mismo movimiento
+  const e = state.editingTx;
+  if (e && e.walletId === w.id) available -= e.type === 'income' ? e.amount : -e.amount;
+  const amount = parseAmount($('#tx-amount').value) || 0;
+  const after = state.txType === 'income' ? available + amount : available - amount;
+  let html = `Saldo en ${escapeHTML(w.name)}: <b>${fmt(available)}</b>`;
+  if (amount > 0) {
+    html += after < 0
+      ? ` · <span class="over">quedará en ${fmt(after)}</span>`
+      : ` · quedará en ${fmt(after)}`;
+  }
+  hint.innerHTML = html;
 }
 
 /** Selector opcional de presupuesto: solo para gastos y solo presupuestos vigentes en la fecha. */
@@ -541,6 +722,7 @@ async function saveTx(e) {
   const amount = parseAmount($('#tx-amount').value);
   const date = $('#tx-date').value;
   if (!(amount > 0)) { err.textContent = 'Ingresa un monto mayor a 0.'; $('#tx-amount').focus(); return; }
+  if (!walletById(state.txWalletId)) { err.textContent = 'Elige una billetera.'; return; }
   if (state.txCategoryId == null) { err.textContent = 'Elige una categoría.'; return; }
   if (!date) { err.textContent = 'Elige una fecha.'; return; }
 
@@ -549,12 +731,14 @@ async function saveTx(e) {
     type: state.txType,
     amount,
     categoryId: state.txCategoryId,
+    walletId: state.txWalletId,
     budgetId: state.txType === 'expense' ? state.txBudgetId : null, // solo los gastos usan presupuesto
     date,
     note: $('#tx-note').value.trim(),
     updatedAt: Date.now(),
   };
   await DB.put('transactions', tx);
+  try { localStorage.setItem('mm-last-wallet', String(tx.walletId)); } catch { /* sin almacenamiento */ }
   $('#tx-dialog').close();
   await loadData();
   // Si el movimiento cae en otro mes, navega a ese mes para que se vea
@@ -565,6 +749,123 @@ async function saveTx(e) {
   const linked = budgetById(tx.budgetId);
   if (linked && budgetStatus(linked, date.slice(0, 7)).remaining < 0) msg += ` · Excediste “${budgetLabel(linked)}”`;
   toast(msg);
+}
+
+// ---------- Diálogo de billetera ----------
+function parseRate(raw) {
+  const n = parseFloat(String(raw).replace(',', '.').replace(/[^\d.]/g, ''));
+  return Number.isFinite(n) ? n : NaN;
+}
+
+function openWalletDialog({ wallet = null } = {}) {
+  state.editingWallet = wallet;
+  state.walletKind = wallet ? wallet.kind : 'cash';
+  state.walletColor = wallet ? wallet.color : PALETTE[Math.floor(Math.random() * PALETTE.length)];
+  state.walletRatePeriod = wallet?.interest?.period || 'annual';
+
+  $('#wallet-dialog-title').textContent = wallet ? 'Editar billetera' : 'Nueva billetera';
+  $('#wallet-amount-label').textContent = wallet
+    ? `Saldo inicial · hoy tiene ${fmt(walletBalance(wallet.id))}`
+    : '¿Cuánto tiene ahora?';
+  $('#wallet-balance').value = wallet ? ((wallet.initialBalance || 0) / 100).toFixed(2) : '';
+  $('#wallet-name').value = wallet?.name || '';
+  $('#wallet-institution').value = wallet?.institution || '';
+  $('#wallet-interest-on').checked = !!wallet?.interest;
+  $('#wallet-rate').value = wallet?.interest ? String(wallet.interest.rate) : '';
+  $('#wallet-since').value = wallet?.interest?.since || todayStr();
+  $('#wallet-currency').textContent = currencySymbol();
+  $('#wallet-error').textContent = '';
+  $('#wallet-delete').hidden = !wallet;
+
+  setWalletKind(state.walletKind);
+  setSegmented($('#wallet-rate-period'), 'period', state.walletRatePeriod);
+  renderSwatches('#wallet-swatches', state.walletColor);
+  autosizeAmount($('#wallet-balance'));
+  updateInterestUI();
+
+  $('#wallet-dialog').showModal();
+  if (!matchMedia('(pointer: coarse)').matches) $('#wallet-name').focus();
+}
+
+function setWalletKind(kind) {
+  state.walletKind = kind;
+  setSegmented($('#wallet-kind'), 'kind', kind);
+  $('#wallet-app-fields').hidden = kind !== 'app';
+}
+
+/** Muestra/oculta los campos de interés y calcula una estimación de ganancias. */
+function updateInterestUI() {
+  const on = $('#wallet-interest-on').checked;
+  $('#wallet-interest-fields').hidden = !on;
+  const preview = $('#wallet-interest-preview');
+  const rate = parseRate($('#wallet-rate').value);
+  if (!on || !(rate > 0)) { preview.innerHTML = ''; return; }
+
+  const daily = state.walletRatePeriod === 'daily' ? rate / 100 : rate / 100 / 365;
+  const typed = parseAmount($('#wallet-balance').value) || 0;
+  const base = state.editingWallet ? walletBalance(state.editingWallet.id) : typed;
+  const equiv = state.walletRatePeriod === 'daily'
+    ? `Equivale a ${(rate * 365).toLocaleString('es-MX', { maximumFractionDigits: 2 })}% anual. `
+    : `Equivale a ${(rate / 365).toLocaleString('es-MX', { maximumFractionDigits: 4 })}% diario. `;
+  if (!(base > 0)) { preview.innerHTML = `${equiv}Escribe un saldo para ver cuánto ganarías.`; return; }
+  const day = base * daily;
+  const month = base * ((1 + daily) ** 30 - 1);
+  const year = base * ((1 + daily) ** 365 - 1);
+  preview.innerHTML = `${equiv}Con ${fmt(base)} ganarías ≈ <b>${fmt(day)}</b> al día, <b>${fmt(month)}</b> al mes y <b>${fmt(year)}</b> al año.`;
+}
+
+async function saveWallet(e) {
+  e.preventDefault();
+  const err = $('#wallet-error');
+  const name = $('#wallet-name').value.trim();
+  const raw = $('#wallet-balance').value.trim();
+  const initialBalance = raw ? parseAmount(raw) : 0;
+  const isApp = state.walletKind === 'app';
+  const interestOn = isApp && $('#wallet-interest-on').checked;
+  const rate = parseRate($('#wallet-rate').value);
+  const since = $('#wallet-since').value;
+
+  if (!name) { err.textContent = 'Escribe un nombre para la billetera.'; $('#wallet-name').focus(); return; }
+  if (state.wallets.some((w) => w.id !== state.editingWallet?.id && w.name.toLowerCase() === name.toLowerCase())) {
+    err.textContent = 'Ya existe una billetera con ese nombre.'; return;
+  }
+  if (Number.isNaN(initialBalance)) { err.textContent = 'El saldo no es válido.'; return; }
+  if (interestOn && !(rate > 0)) { err.textContent = 'Escribe la tasa de interés (mayor a 0).'; $('#wallet-rate').focus(); return; }
+  if (interestOn && !since) { err.textContent = 'Elige desde qué fecha se generan intereses.'; return; }
+
+  const wallet = {
+    ...(state.editingWallet || { createdAt: Date.now() }),
+    name,
+    kind: state.walletKind,
+    institution: isApp ? $('#wallet-institution').value.trim() : '',
+    color: state.walletColor,
+    initialBalance,
+    interest: interestOn ? { rate, period: state.walletRatePeriod, since } : null,
+  };
+  await DB.put('wallets', wallet);
+  $('#wallet-dialog').close();
+  await loadData();
+  renderAll();
+  toast(state.editingWallet ? 'Billetera actualizada' : 'Billetera creada');
+}
+
+async function deleteWallet() {
+  const w = state.editingWallet;
+  if (!w) return;
+  const err = $('#wallet-error');
+  if (state.wallets.length === 1) { err.textContent = 'Debe existir al menos una billetera.'; return; }
+  const used = state.transactions.filter((t) => t.walletId === w.id).length;
+  if (used) {
+    err.textContent = `Tiene ${used} ${used === 1 ? 'movimiento' : 'movimientos'}. Cámbialos a otra billetera antes de eliminarla.`;
+    return;
+  }
+  const ok = await confirmDialog('Eliminar billetera', `Se eliminará la billetera “${w.name}”.`, 'Eliminar');
+  if (!ok) return;
+  await DB.remove('wallets', w.id);
+  $('#wallet-dialog').close();
+  await loadData();
+  renderAll();
+  toast('Billetera eliminada');
 }
 
 // ---------- Diálogo de presupuesto ----------
@@ -884,6 +1185,14 @@ function bindEvents() {
     if (!state.editingTx) $('#tx-dialog-title').textContent = txTitle();
     renderTxCategories();
     renderTxBudgets();
+    renderWalletHint();
+  });
+  $('#tx-wallets').addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    state.txWalletId = Number(b.dataset.id);
+    $('#tx-error').textContent = '';
+    $$('.chip-option', e.currentTarget).forEach((c) => c.classList.toggle('selected', c === b));
+    renderWalletHint();
   });
   $('#tx-categories').addEventListener('click', (e) => {
     const b = e.target.closest('button'); if (!b) return;
@@ -899,7 +1208,37 @@ function bindEvents() {
     $$('.chip-option', e.currentTarget).forEach((c) => c.classList.toggle('selected', c === b));
     renderBudgetHint();
   });
-  $('#tx-amount').addEventListener('input', (e) => { autosizeAmount(e.target); renderBudgetHint(); });
+  $('#tx-amount').addEventListener('input', (e) => { autosizeAmount(e.target); renderBudgetHint(); renderWalletHint(); });
+
+  // Billeteras
+  $('#btn-new-wallet').addEventListener('click', () => openWalletDialog());
+  const openWalletFromList = (e) => {
+    const card = e.target.closest('[data-wallet]'); if (!card) return;
+    if (e.type === 'keydown' && e.key !== 'Enter') return;
+    const wallet = walletById(Number(card.dataset.wallet));
+    if (wallet) openWalletDialog({ wallet });
+  };
+  ['#wallet-grid', '#dash-wallets'].forEach((sel) => {
+    $(sel).addEventListener('click', openWalletFromList);
+    $(sel).addEventListener('keydown', openWalletFromList);
+  });
+  $('#wallet-form').addEventListener('submit', saveWallet);
+  $('#wallet-delete').addEventListener('click', deleteWallet);
+  $('#wallet-kind').addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    setWalletKind(b.dataset.kind);
+  });
+  $('#wallet-interest-on').addEventListener('change', updateInterestUI);
+  $('#wallet-rate').addEventListener('input', updateInterestUI);
+  $('#wallet-rate-period').addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    state.walletRatePeriod = b.dataset.period;
+    setSegmented(e.currentTarget, 'period', state.walletRatePeriod);
+    updateInterestUI();
+  });
+  $('#wallet-balance').addEventListener('input', (e) => { autosizeAmount(e.target); updateInterestUI(); });
+  bindSwatches('#wallet-swatches', (color) => { state.walletColor = color; });
+  $('#filter-wallet').addEventListener('change', (e) => { state.filterWallet = e.target.value; renderTransactions(); });
   $('#budget-amount').addEventListener('input', (e) => autosizeAmount(e.target));
   $('#tx-date').addEventListener('change', renderTxBudgets);
 
@@ -963,7 +1302,7 @@ function bindEvents() {
   });
   $('#btn-reset').addEventListener('click', async () => {
     const ok = await confirmDialog('Borrar todos los datos',
-      'Se eliminarán todos los movimientos, presupuestos y categorías personalizadas. Esta acción no se puede deshacer.', 'Borrar todo');
+      'Se eliminarán todos los movimientos, presupuestos, billeteras y categorías personalizadas. Esta acción no se puede deshacer.', 'Borrar todo');
     if (!ok) return;
     await DB.resetAll();
     await loadData();

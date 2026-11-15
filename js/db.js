@@ -1,10 +1,13 @@
 // =========================================================
 // Capa de datos — IndexedDB
-// Stores: transactions, categories, budgets, settings
+// Stores: transactions, categories, budgets, wallets, settings
 // =========================================================
 
 const DB_NAME = 'mymoney';
-const DB_VERSION = 2; // v2: presupuestos
+const DB_VERSION = 3; // v2: presupuestos · v3: billeteras
+
+/** Billetera que se crea al instalar (y al migrar: recibe los movimientos que ya existían). */
+export const DEFAULT_WALLET = { name: 'Efectivo', kind: 'cash', color: '#4F7942', initialBalance: 0, interest: null };
 
 export const DEFAULT_CATEGORIES = [
   // Ingresos
@@ -70,6 +73,20 @@ export function openDB() {
       if (!db.objectStoreNames.contains('budgets')) {
         const b = db.createObjectStore('budgets', { keyPath: 'id', autoIncrement: true });
         b.createIndex('categoryId', 'categoryId');
+      }
+      if (!db.objectStoreNames.contains('wallets')) {
+        const w = db.createObjectStore('wallets', { keyPath: 'id', autoIncrement: true });
+        const add = w.add({ ...DEFAULT_WALLET, createdAt: Date.now() });
+        // Los movimientos que ya existían pasan a la billetera "Efectivo"
+        add.onsuccess = () => {
+          const walletId = add.result;
+          tx.objectStore('transactions').openCursor().onsuccess = (e) => {
+            const cursor = e.target.result;
+            if (!cursor) return;
+            if (cursor.value.walletId == null) cursor.update({ ...cursor.value, walletId });
+            cursor.continue();
+          };
+        };
       }
     };
 
@@ -155,10 +172,10 @@ export async function deleteCategory(id) {
 
 /** Exporta toda la base a un objeto plano. */
 export async function exportAll() {
-  const [transactions, categories, budgets, settings] = await Promise.all([
-    getAll('transactions'), getAll('categories'), getAll('budgets'), getAll('settings'),
+  const [transactions, categories, budgets, wallets, settings] = await Promise.all([
+    getAll('transactions'), getAll('categories'), getAll('budgets'), getAll('wallets'), getAll('settings'),
   ]);
-  return { app: 'MyMoney', version: 2, exportedAt: new Date().toISOString(), categories, transactions, budgets, settings };
+  return { app: 'MyMoney', version: 3, exportedAt: new Date().toISOString(), categories, transactions, budgets, wallets, settings };
 }
 
 /** Reemplaza toda la base con los datos importados. */
@@ -167,26 +184,33 @@ export async function importAll(data) {
     throw new Error('El archivo no es un respaldo válido de MyMoney.');
   }
   const db = await openDB();
-  const tx = db.transaction(['categories', 'transactions', 'budgets', 'settings'], 'readwrite');
+  const tx = db.transaction(['categories', 'transactions', 'budgets', 'wallets', 'settings'], 'readwrite');
   const cats = tx.objectStore('categories');
   const txs = tx.objectStore('transactions');
   const buds = tx.objectStore('budgets');
+  const wals = tx.objectStore('wallets');
   const sets = tx.objectStore('settings');
-  cats.clear(); txs.clear(); buds.clear(); sets.clear();
+  cats.clear(); txs.clear(); buds.clear(); wals.clear(); sets.clear();
   data.categories.forEach((c) => cats.put(c));
-  data.transactions.forEach((t) => txs.put(t));
   (data.budgets || []).forEach((b) => buds.put(b)); // los respaldos v1 no traen presupuestos
+  // Los respaldos anteriores a v3 no traen billeteras: se crea "Efectivo" y recibe todo
+  const wallets = data.wallets?.length ? data.wallets : [{ ...DEFAULT_WALLET, id: 1, createdAt: Date.now() }];
+  wallets.forEach((w) => wals.put(w));
+  data.transactions.forEach((t) => txs.put({ ...t, walletId: t.walletId ?? wallets[0].id }));
   (data.settings || []).forEach((s) => sets.put(s));
   await txDone(tx);
 }
 
-/** Borra movimientos, presupuestos y categorías personalizadas; restaura las predeterminadas. */
+/** Borra todo (movimientos, presupuestos, billeteras y categorías personalizadas) y restaura lo inicial. */
 export async function resetAll() {
   const db = await openDB();
-  const tx = db.transaction(['categories', 'transactions', 'budgets'], 'readwrite');
+  const tx = db.transaction(['categories', 'transactions', 'budgets', 'wallets'], 'readwrite');
   const cats = tx.objectStore('categories');
   tx.objectStore('transactions').clear();
   tx.objectStore('budgets').clear();
+  const wals = tx.objectStore('wallets');
+  wals.clear();
+  wals.add({ ...DEFAULT_WALLET, createdAt: Date.now() });
   cats.clear();
   const now = Date.now();
   DEFAULT_CATEGORIES.forEach((cat, i) => cats.add({ ...cat, isDefault: true, createdAt: now + i }));

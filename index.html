@@ -12,7 +12,7 @@
   <meta name="apple-mobile-web-app-title" content="MyMoney">
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="css/styles.css">
   <script>
     // Aplica el tema antes de pintar para evitar parpadeo
@@ -44,13 +44,17 @@
       <button class="nav-fab" id="fab" aria-label="Nuevo movimiento">
         <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
       </button>
-      <button class="nav-item" data-view="categories">
-        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>
-        <span>Categorías</span>
+      <button class="nav-item" data-view="wallets">
+        <svg viewBox="0 0 24 24"><path d="M19 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-3"/><path d="M21 8h-5a4 4 0 0 0 0 8h5z"/><circle cx="16" cy="12" r="1"/></svg>
+        <span>Billeteras</span>
       </button>
       <button class="nav-item" data-view="budgets">
         <svg viewBox="0 0 24 24"><path d="M21 12A9 9 0 1 1 12 3v9z"/><path d="M15.5 3.7A9 9 0 0 1 20.3 8.5H15.5z"/></svg>
         <span>Presupuestos</span>
+      </button>
+      <button class="nav-item nav-secondary" data-view="categories">
+        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>
+        <span>Categorías</span>
       </button>
       <button class="nav-item nav-settings" data-view="settings">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
@@ -91,6 +95,7 @@
           <article class="card balance-card">
             <p class="eyebrow">Saldo total</p>
             <p class="balance" id="balance-total">$0.00</p>
+            <p class="balance-sub" id="balance-sub"></p>
             <div class="balance-split">
               <div>
                 <span class="dot dot-gold"></span>
@@ -124,6 +129,14 @@
             <div class="breakdown" id="breakdown"></div>
           </article>
 
+          <article class="card span-2">
+            <div class="card-head">
+              <h2>Billeteras</h2>
+              <button class="link-btn" data-goto="wallets">Administrar</button>
+            </div>
+            <div class="wallet-grid compact" id="dash-wallets"></div>
+          </article>
+
           <article class="card span-2" id="dash-budgets-card">
             <div class="card-head">
               <h2>Presupuestos</h2>
@@ -153,6 +166,9 @@
           <select id="filter-category" aria-label="Filtrar por categoría">
             <option value="all">Todas las categorías</option>
           </select>
+          <select id="filter-wallet" aria-label="Filtrar por billetera">
+            <option value="all">Todas las billeteras</option>
+          </select>
           <div class="search">
             <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
             <input type="search" id="filter-search" placeholder="Buscar nota o categoría…">
@@ -160,6 +176,18 @@
         </div>
         <div class="summary-strip" id="tx-summary"></div>
         <div id="tx-groups"></div>
+      </section>
+
+      <!-- BILLETERAS -->
+      <section class="view" id="view-wallets">
+        <div class="card-head page-head">
+          <div class="budget-overview" id="wallet-overview"></div>
+          <button class="btn btn-gold" id="btn-new-wallet">
+            <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg> Nueva billetera
+          </button>
+        </div>
+        <div class="wallet-grid" id="wallet-grid"></div>
+        <p class="muted wallet-note">Los intereses son una estimación: se calculan cada día sobre el saldo de la billetera (interés compuesto) y no incluyen impuestos ni límites del banco.</p>
       </section>
 
       <!-- CATEGORÍAS -->
@@ -217,6 +245,14 @@
           </article>
 
           <article class="card">
+            <h2>Categorías</h2>
+            <p class="muted">Crea, edita o elimina las categorías de tus ingresos y gastos.</p>
+            <button class="btn btn-outline" data-goto="categories">
+              <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg> Administrar categorías
+            </button>
+          </article>
+
+          <article class="card">
             <h2>Respaldo</h2>
             <p class="muted">Tus datos se guardan solo en este dispositivo (IndexedDB). Exporta un respaldo para no perderlos.</p>
             <div class="row-btns">
@@ -238,7 +274,7 @@
 
           <article class="card danger-zone">
             <h2>Zona de peligro</h2>
-            <p class="muted">Elimina todos los movimientos, presupuestos y categorías personalizadas.</p>
+            <p class="muted">Elimina todos los movimientos, presupuestos, billeteras y categorías personalizadas.</p>
             <button class="btn btn-danger" id="btn-reset">Borrar todos los datos</button>
           </article>
         </div>
@@ -264,6 +300,11 @@
           <span class="currency-symbol" id="tx-currency">$</span>
           <input id="tx-amount" inputmode="decimal" autocomplete="off" placeholder="0.00" aria-label="Monto" required>
         </label>
+        <div class="field">
+          <span>Billetera</span>
+          <div class="chip-picker" id="tx-wallets"></div>
+          <small class="wallet-hint" id="tx-wallet-hint"></small>
+        </div>
         <div class="field">
           <span>Categoría</span>
           <div class="chip-picker" id="tx-categories"></div>
@@ -325,6 +366,82 @@
       </div>
       <footer class="sheet-foot">
         <button type="button" class="btn btn-danger-ghost" id="cat-delete" hidden>Eliminar</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn btn-outline" data-close>Cancelar</button>
+        <button type="submit" class="btn btn-gold">Guardar</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- Diálogo: billetera -->
+  <dialog id="wallet-dialog" class="sheet">
+    <form id="wallet-form" method="dialog" novalidate>
+      <header class="sheet-head">
+        <h2 id="wallet-dialog-title">Nueva billetera</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Cerrar">
+          <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </header>
+      <div class="sheet-body">
+        <div class="field">
+          <span>Tipo</span>
+          <div class="segmented type-toggle" id="wallet-kind">
+            <button type="button" data-kind="cash">Efectivo</button>
+            <button type="button" data-kind="app">Banco / App</button>
+          </div>
+        </div>
+        <p class="amount-label" id="wallet-amount-label">Saldo inicial</p>
+        <label class="amount-field">
+          <span class="currency-symbol" id="wallet-currency">$</span>
+          <input id="wallet-balance" inputmode="decimal" autocomplete="off" placeholder="0.00" aria-label="Saldo inicial">
+        </label>
+        <label class="field">
+          <span>Nombre</span>
+          <input type="text" id="wallet-name" maxlength="30" placeholder="Ej. Cartera, Tarjeta Nu" required>
+        </label>
+
+        <div id="wallet-app-fields" hidden>
+          <label class="field">
+            <span>Banco o app (opcional)</span>
+            <input type="text" id="wallet-institution" maxlength="30" placeholder="Ej. Nu, Mercado Pago, BBVA">
+          </label>
+          <label class="switch-row">
+            <span>
+              <strong>Interés compuesto</strong>
+              <small class="muted">El banco te paga intereses cada día sobre tu saldo.</small>
+            </span>
+            <input type="checkbox" class="switch" id="wallet-interest-on">
+          </label>
+          <div id="wallet-interest-fields" hidden>
+            <div class="field-row two">
+              <label class="field">
+                <span>Tasa de interés (%)</span>
+                <input type="text" id="wallet-rate" inputmode="decimal" autocomplete="off" placeholder="Ej. 14.5">
+              </label>
+              <div class="field">
+                <span>La tasa es</span>
+                <div class="segmented" id="wallet-rate-period">
+                  <button type="button" data-period="annual">Anual</button>
+                  <button type="button" data-period="daily">Diaria</button>
+                </div>
+              </div>
+            </div>
+            <label class="field">
+              <span>Generar intereses desde</span>
+              <input type="date" id="wallet-since">
+            </label>
+            <p class="interest-preview" id="wallet-interest-preview"></p>
+          </div>
+        </div>
+
+        <div class="field">
+          <span>Color</span>
+          <div class="swatches" id="wallet-swatches"></div>
+        </div>
+        <p class="form-error" id="wallet-error" role="alert"></p>
+      </div>
+      <footer class="sheet-foot">
+        <button type="button" class="btn btn-danger-ghost" id="wallet-delete" hidden>Eliminar</button>
         <span class="spacer"></span>
         <button type="button" class="btn btn-outline" data-close>Cancelar</button>
         <button type="submit" class="btn btn-gold">Guardar</button>

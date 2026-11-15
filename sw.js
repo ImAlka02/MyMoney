@@ -1,5 +1,5 @@
 // Service worker de MyMoney: guarda la app en caché para usarla sin conexión.
-const CACHE = 'mymoney-v4';
+const CACHE = 'mymoney-v6';
 const ASSETS = [
   './',
   './index.html',
@@ -11,6 +11,7 @@ const ASSETS = [
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/icon-maskable-512.png',
+  './icons/apple-touch-icon.png',
 ];
 
 self.addEventListener('install', (event) => {
