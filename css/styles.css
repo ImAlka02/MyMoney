@@ -146,6 +146,8 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
   flex-wrap: wrap;
 }
 .topbar h1 { font-size: 26px; letter-spacing: -.02em; font-weight: 700; }
+.topbar-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.topbar-settings { display: none; }
 
 .month-picker {
   display: flex;
@@ -338,19 +340,20 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .bar > i { display: block; height: 100%; border-radius: inherit; }
 
 /* ---------- Lista de movimientos ---------- */
-.tx-list { list-style: none; margin: 0; padding: 0; }
+.tx-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
 .tx-item {
   display: grid;
   grid-template-columns: auto 1fr auto;
   align-items: center;
-  gap: 12px;
-  padding: 12px 8px;
+  gap: 14px;
+  padding: 14px 16px 14px 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--c, var(--border));
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: background .12s;
-  border-left: 3px solid transparent;
+  transition: background .12s, border-color .12s;
 }
-.tx-item + .tx-item { border-top: 1px solid var(--border); }
 .tx-item:hover { background: var(--surface-2); }
 .tx-avatar {
   width: 40px; height: 40px;
@@ -394,7 +397,7 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 }
 .tx-group-head strong { color: var(--text); font-weight: 600; }
 .tx-group-head strong::first-letter { text-transform: uppercase; }
-.tx-group .card { padding: 6px 10px; }
+.tx-group .card { padding: 12px; }
 
 .empty {
   text-align: center;
@@ -453,34 +456,50 @@ input:focus, select:focus { border-color: var(--gold); }
 .field { display: grid; gap: 6px; margin-bottom: 16px; }
 .field > span { font-size: 13px; font-weight: 600; color: var(--muted); }
 .field-row { display: grid; grid-template-columns: 170px 1fr; gap: 12px; }
+.field-row.two { grid-template-columns: 1fr 1fr; }
+.field > small { font-size: 12px; }
 .form-error { color: var(--danger); font-size: 13px; min-height: 1em; }
 
+/* Monto: el símbolo y el número forman un solo bloque centrado;
+   el input crece con lo que escribes (ver autosizeAmount en app.js). */
 .amount-field {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: center;
-  gap: 4px;
-  margin: 20px 0 22px;
-  padding-bottom: 12px;
-  border-bottom: 2px solid var(--border);
-  transition: border-color .15s;
+  gap: 6px;
+  margin: 20px 0 24px;
+  padding: 18px 16px;
+  background: var(--bg);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  cursor: text;
+  overflow: hidden;
+  transition: border-color .15s, box-shadow .15s;
 }
-.amount-field:focus-within { border-color: var(--gold); }
-.currency-symbol { font-size: 28px; color: var(--muted); font-weight: 600; }
+.amount-field:focus-within { border-color: var(--gold); box-shadow: 0 0 0 4px var(--gold-soft); }
+.currency-symbol { font-size: 26px; color: var(--muted); font-weight: 600; line-height: 1; }
+.amount-field input,
+.amount-measure {
+  font-size: 42px;
+  font-weight: 700;
+  letter-spacing: -.02em;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font);
+}
 .amount-field input {
   border: 0;
   background: transparent;
-  font-size: 40px;
-  font-weight: 700;
-  width: 100%;
-  max-width: 280px;
-  field-sizing: content;
-  min-width: 4ch;
-  text-align: center;
+  width: 4ch;
+  max-width: 100%;
+  min-height: 0;
   padding: 0;
-  letter-spacing: -.02em;
-  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  text-align: left;
+  caret-color: var(--gold);
 }
+.amount-field input:focus { border: 0; }
+.amount-field input::placeholder { color: var(--muted); opacity: .45; }
+.amount-measure { position: absolute; visibility: hidden; white-space: pre; pointer-events: none; left: -9999px; top: 0; }
 
 .type-toggle { display: flex; width: 100%; }
 .type-toggle button { flex: 1; padding: 10px; font-size: 14px; }
@@ -555,6 +574,58 @@ input:focus, select:focus { border-color: var(--gold); }
 .cat-card .cat-total { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .badge { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; padding: 1px 6px; border-radius: 4px; background: var(--gold-soft); color: var(--gold); font-weight: 700; margin-left: 4px; }
 
+/* ---------- Presupuestos ---------- */
+.budget-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 14px;
+}
+.budget-list.compact { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.budget-item {
+  display: grid;
+  gap: 10px;
+  cursor: pointer;
+  transition: border-color .15s, transform .15s;
+}
+.budget-item:hover { border-color: var(--c); }
+.budget-list.compact .budget-item {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+.budget-top { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; }
+.budget-info { min-width: 0; }
+.budget-remaining { text-align: right; white-space: nowrap; }
+.budget-remaining strong { display: block; font-variant-numeric: tabular-nums; font-size: 16px; }
+.budget-remaining small { font-size: 11px; color: var(--muted); }
+.budget-bar { height: 10px; background: var(--surface-2); border-radius: 999px; overflow: hidden; }
+.budget-bar > i { display: block; height: 100%; border-radius: inherit; background: var(--c); transition: width .3s ease; }
+.budget-foot { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.level-warn .budget-remaining strong { color: var(--gold); }
+.level-over .budget-remaining strong,
+.level-over .budget-foot span:last-child { color: var(--danger); }
+.level-over .budget-bar > i { background: var(--danger); }
+
+.budget-overview { display: flex; gap: 24px; flex-wrap: wrap; }
+.budget-overview div { display: grid; }
+.budget-overview strong { font-size: 18px; font-variant-numeric: tabular-nums; }
+.budget-overview .over { color: var(--danger); }
+
+.budget-hint {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  border-left: 3px solid var(--c, var(--gold));
+  font-size: 13px;
+  display: grid;
+  gap: 4px;
+}
+.budget-hint .budget-bar { height: 6px; margin-top: 4px; }
+.budget-hint .over { color: var(--danger); font-weight: 600; }
+.budget-hint + .budget-hint { margin-top: 6px; }
+
 /* ---------- Ajustes ---------- */
 .settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; align-items: start; }
 .settings .card h2 { margin-bottom: 14px; }
@@ -578,15 +649,17 @@ dialog.sheet[open] { animation: pop .18s ease; }
 dialog::backdrop { background: rgba(0, 0, 0, .5); backdrop-filter: blur(2px); }
 @keyframes pop { from { opacity: 0; transform: translateY(12px) scale(.98); } to { opacity: 1; transform: none; } }
 .sheet form { display: flex; flex-direction: column; max-height: inherit; }
-.sheet-head { display: flex; justify-content: space-between; align-items: center; padding: 18px 20px 0; }
+.sheet { --sheet-x: 28px; }
+.sheet-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 22px var(--sheet-x) 0; }
 .sheet-head h2 { font-size: 18px; }
-.sheet-body { padding: 18px 20px 6px; overflow-y: auto; }
+.sheet-head .icon-btn { margin-right: -8px; }
+.sheet-body { padding: 20px var(--sheet-x) 8px; overflow-y: auto; }
 .sheet-body h2 { font-size: 18px; margin-bottom: 8px; }
 .sheet-foot {
   display: flex;
   gap: 10px;
   align-items: center;
-  padding: 14px 20px 18px;
+  padding: 16px var(--sheet-x) 20px;
   border-top: 1px solid var(--border);
 }
 .spacer { flex: 1; }
@@ -635,7 +708,8 @@ dialog::backdrop { background: rgba(0, 0, 0, .5); backdrop-filter: blur(2px); }
     background: color-mix(in srgb, var(--surface) 92%, transparent);
     backdrop-filter: blur(12px);
   }
-  .brand, .nav-actions { display: none; }
+  .brand, .nav-actions, .nav-settings { display: none; }
+  .topbar-settings { display: inline-grid; }
   .nav-item {
     flex: 1;
     flex-direction: column;
@@ -660,7 +734,7 @@ dialog::backdrop { background: rgba(0, 0, 0, .5); backdrop-filter: blur(2px); }
   }
   .nav-fab svg { width: 24px; height: 24px; stroke-width: 2.5; }
 
-  .main { padding: 16px 16px calc(var(--bottom-h) + 32px + env(safe-area-inset-bottom)); padding-top: calc(16px + env(safe-area-inset-top)); }
+  .main { padding: 18px 20px calc(var(--bottom-h) + 32px + env(safe-area-inset-bottom)); padding-top: calc(18px + env(safe-area-inset-top)); }
   .topbar h1 { font-size: 22px; }
   .month-label { min-width: 110px; font-size: 14px; }
   .toast { bottom: calc(var(--bottom-h) + 20px + env(safe-area-inset-bottom)); }
@@ -683,7 +757,8 @@ dialog::backdrop { background: rgba(0, 0, 0, .5); backdrop-filter: blur(2px); }
     max-height: 92dvh;
   }
   dialog.sheet:not(.small)[open] { animation: slide-up .22s ease; }
-  .sheet-foot { padding-bottom: calc(18px + env(safe-area-inset-bottom)); }
+  .sheet { --sheet-x: max(24px, env(safe-area-inset-left)); }
+  .sheet-foot { padding-bottom: calc(20px + env(safe-area-inset-bottom)); }
   @keyframes slide-up { from { transform: translateY(100%); } to { transform: none; } }
 }
 
@@ -697,7 +772,10 @@ dialog::backdrop { background: rgba(0, 0, 0, .5); backdrop-filter: blur(2px); }
   .summary-strip .card:first-child { grid-column: 1 / -1; }
   .page-head { flex-direction: column; align-items: stretch; }
   .page-head .segmented button { flex: 1; }
-  .cat-grid { grid-template-columns: 1fr; }
+  .cat-grid, .budget-list, .budget-list.compact { grid-template-columns: 1fr; }
+  .budget-overview { justify-content: space-between; gap: 12px; }
+  .budget-overview strong { font-size: 15px; }
+  .field-row.two { grid-template-columns: 1fr 1fr; }
   .balance-split { gap: 10px; }
   .split-amount { font-size: 16px; }
 }

@@ -48,23 +48,32 @@
         <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>
         <span>Categorías</span>
       </button>
-      <button class="nav-item" data-view="settings">
+      <button class="nav-item" data-view="budgets">
+        <svg viewBox="0 0 24 24"><path d="M21 12A9 9 0 1 1 12 3v9z"/><path d="M15.5 3.7A9 9 0 0 1 20.3 8.5H15.5z"/></svg>
+        <span>Presupuestos</span>
+      </button>
+      <button class="nav-item nav-settings" data-view="settings">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
         <span>Ajustes</span>
       </button>
       <div class="nav-actions">
         <button class="btn btn-gold btn-block" data-action="new-income">
-          <svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg> Ingresar
+          <svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg> Ingreso
         </button>
         <button class="btn btn-outline btn-block" data-action="new-expense">
-          <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12l7 7 7-7"/></svg> Retirar
+          <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12l7 7 7-7"/></svg> Gasto
         </button>
       </div>
     </nav>
 
     <main class="main">
       <header class="topbar">
-        <h1 id="view-title">Resumen</h1>
+        <div class="topbar-title">
+          <h1 id="view-title">Resumen</h1>
+          <button class="icon-btn topbar-settings" data-goto="settings" aria-label="Ajustes">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+          </button>
+        </div>
         <div class="month-picker" id="month-picker">
           <button class="icon-btn" id="month-prev" aria-label="Mes anterior">
             <svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>
@@ -96,10 +105,10 @@
             </div>
             <div class="balance-actions">
               <button class="btn btn-gold" data-action="new-income">
-                <svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg> Ingresar
+                <svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg> Ingreso
               </button>
               <button class="btn btn-ghost-light" data-action="new-expense">
-                <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12l7 7 7-7"/></svg> Retirar
+                <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12l7 7 7-7"/></svg> Gasto
               </button>
             </div>
           </article>
@@ -113,6 +122,14 @@
               </div>
             </div>
             <div class="breakdown" id="breakdown"></div>
+          </article>
+
+          <article class="card span-2" id="dash-budgets-card">
+            <div class="card-head">
+              <h2>Presupuestos</h2>
+              <button class="link-btn" data-goto="budgets">Administrar</button>
+            </div>
+            <div class="budget-list compact" id="dash-budgets"></div>
           </article>
 
           <article class="card span-2">
@@ -157,6 +174,17 @@
           </button>
         </div>
         <div class="cat-grid" id="cat-grid"></div>
+      </section>
+
+      <!-- PRESUPUESTOS -->
+      <section class="view" id="view-budgets">
+        <div class="card-head page-head">
+          <div class="budget-overview" id="budget-overview"></div>
+          <button class="btn btn-gold" id="btn-new-budget">
+            <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg> Nuevo presupuesto
+          </button>
+        </div>
+        <div class="budget-list" id="budget-list"></div>
       </section>
 
       <!-- AJUSTES -->
@@ -210,7 +238,7 @@
 
           <article class="card danger-zone">
             <h2>Zona de peligro</h2>
-            <p class="muted">Elimina todos los movimientos y categorías personalizadas.</p>
+            <p class="muted">Elimina todos los movimientos, presupuestos y categorías personalizadas.</p>
             <button class="btn btn-danger" id="btn-reset">Borrar todos los datos</button>
           </article>
         </div>
@@ -229,8 +257,8 @@
       </header>
       <div class="sheet-body">
         <div class="segmented type-toggle" id="tx-type">
-          <button type="button" data-type="income">Ingresar</button>
-          <button type="button" data-type="expense">Retirar</button>
+          <button type="button" data-type="income">Ingreso</button>
+          <button type="button" data-type="expense">Gasto</button>
         </div>
         <label class="amount-field">
           <span class="currency-symbol" id="tx-currency">$</span>
@@ -239,6 +267,7 @@
         <div class="field">
           <span>Categoría</span>
           <div class="chip-picker" id="tx-categories"></div>
+          <div class="budget-hint" id="tx-budget-hint" hidden></div>
         </div>
         <div class="field-row">
           <label class="field">
@@ -292,6 +321,57 @@
       </div>
       <footer class="sheet-foot">
         <button type="button" class="btn btn-danger-ghost" id="cat-delete" hidden>Eliminar</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn btn-outline" data-close>Cancelar</button>
+        <button type="submit" class="btn btn-gold">Guardar</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- Diálogo: presupuesto -->
+  <dialog id="budget-dialog" class="sheet">
+    <form id="budget-form" method="dialog" novalidate>
+      <header class="sheet-head">
+        <h2 id="budget-dialog-title">Nuevo presupuesto</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Cerrar">
+          <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </header>
+      <div class="sheet-body">
+        <label class="amount-field">
+          <span class="currency-symbol" id="budget-currency">$</span>
+          <input id="budget-amount" inputmode="decimal" autocomplete="off" placeholder="0.00" aria-label="Monto del presupuesto" required>
+        </label>
+        <div class="field">
+          <span>Categoría de gasto</span>
+          <div class="chip-picker" id="budget-categories"></div>
+        </div>
+        <label class="field">
+          <span>Nombre (opcional)</span>
+          <input type="text" id="budget-name" maxlength="40" placeholder="Ej. Despensa del mes">
+        </label>
+        <div class="field">
+          <span>Periodo</span>
+          <div class="segmented" id="budget-period">
+            <button type="button" data-period="monthly">Mensual</button>
+            <button type="button" data-period="range">Por fechas</button>
+          </div>
+          <small class="muted" id="budget-period-help"></small>
+        </div>
+        <div class="field-row two" id="budget-range" hidden>
+          <label class="field">
+            <span>Desde</span>
+            <input type="date" id="budget-start">
+          </label>
+          <label class="field">
+            <span>Hasta</span>
+            <input type="date" id="budget-end">
+          </label>
+        </div>
+        <p class="form-error" id="budget-error" role="alert"></p>
+      </div>
+      <footer class="sheet-foot">
+        <button type="button" class="btn btn-danger-ghost" id="budget-delete" hidden>Eliminar</button>
         <span class="spacer"></span>
         <button type="button" class="btn btn-outline" data-close>Cancelar</button>
         <button type="submit" class="btn btn-gold">Guardar</button>

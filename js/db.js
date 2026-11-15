@@ -1,10 +1,10 @@
 // =========================================================
 // Capa de datos — IndexedDB
-// Stores: transactions, categories, settings
+// Stores: transactions, categories, budgets, settings
 // =========================================================
 
 const DB_NAME = 'mymoney';
-const DB_VERSION = 1;
+const DB_VERSION = 2; // v2: presupuestos
 
 export const DEFAULT_CATEGORIES = [
   // Ingresos
@@ -67,6 +67,10 @@ export function openDB() {
       if (!db.objectStoreNames.contains('settings')) {
         db.createObjectStore('settings', { keyPath: 'key' });
       }
+      if (!db.objectStoreNames.contains('budgets')) {
+        const b = db.createObjectStore('budgets', { keyPath: 'id', autoIncrement: true });
+        b.createIndex('categoryId', 'categoryId');
+      }
     };
 
     req.onsuccess = () => {
@@ -118,10 +122,14 @@ export async function setSetting(key, value) {
 
 // --- Operaciones compuestas ---
 
-/** Elimina una categoría y deja sus movimientos como "Sin categoría". */
+/** Elimina una categoría, sus presupuestos y deja sus movimientos como "Sin categoría". */
 export async function deleteCategory(id) {
   const db = await openDB();
-  const tx = db.transaction(['categories', 'transactions'], 'readwrite');
+  const tx = db.transaction(['categories', 'transactions', 'budgets'], 'readwrite');
+  tx.objectStore('budgets').index('categoryId').openCursor(IDBKeyRange.only(id)).onsuccess = (e) => {
+    const cursor = e.target.result;
+    if (cursor) { cursor.delete(); cursor.continue(); }
+  };
   const txStore = tx.objectStore('transactions');
   const idx = txStore.index('categoryId');
   idx.openCursor(IDBKeyRange.only(id)).onsuccess = (e) => {
@@ -137,10 +145,10 @@ export async function deleteCategory(id) {
 
 /** Exporta toda la base a un objeto plano. */
 export async function exportAll() {
-  const [transactions, categories, settings] = await Promise.all([
-    getAll('transactions'), getAll('categories'), getAll('settings'),
+  const [transactions, categories, budgets, settings] = await Promise.all([
+    getAll('transactions'), getAll('categories'), getAll('budgets'), getAll('settings'),
   ]);
-  return { app: 'MyMoney', version: 1, exportedAt: new Date().toISOString(), categories, transactions, settings };
+  return { app: 'MyMoney', version: 2, exportedAt: new Date().toISOString(), categories, transactions, budgets, settings };
 }
 
 /** Reemplaza toda la base con los datos importados. */
@@ -149,23 +157,26 @@ export async function importAll(data) {
     throw new Error('El archivo no es un respaldo válido de MyMoney.');
   }
   const db = await openDB();
-  const tx = db.transaction(['categories', 'transactions', 'settings'], 'readwrite');
+  const tx = db.transaction(['categories', 'transactions', 'budgets', 'settings'], 'readwrite');
   const cats = tx.objectStore('categories');
   const txs = tx.objectStore('transactions');
+  const buds = tx.objectStore('budgets');
   const sets = tx.objectStore('settings');
-  cats.clear(); txs.clear(); sets.clear();
+  cats.clear(); txs.clear(); buds.clear(); sets.clear();
   data.categories.forEach((c) => cats.put(c));
   data.transactions.forEach((t) => txs.put(t));
+  (data.budgets || []).forEach((b) => buds.put(b)); // los respaldos v1 no traen presupuestos
   (data.settings || []).forEach((s) => sets.put(s));
   await txDone(tx);
 }
 
-/** Borra movimientos y categorías personalizadas, restaura las predeterminadas. */
+/** Borra movimientos, presupuestos y categorías personalizadas; restaura las predeterminadas. */
 export async function resetAll() {
   const db = await openDB();
-  const tx = db.transaction(['categories', 'transactions'], 'readwrite');
+  const tx = db.transaction(['categories', 'transactions', 'budgets'], 'readwrite');
   const cats = tx.objectStore('categories');
   tx.objectStore('transactions').clear();
+  tx.objectStore('budgets').clear();
   cats.clear();
   const now = Date.now();
   DEFAULT_CATEGORIES.forEach((cat, i) => cats.add({ ...cat, isDefault: true, createdAt: now + i }));

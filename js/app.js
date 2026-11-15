@@ -8,7 +8,8 @@ const PALETTE = [
   '#C0623B', '#D08C3A', '#B8913E', '#4F7942', '#2F8F83', '#3B6E8F', '#5A7D9A',
   '#6B5B95', '#8E5A9B', '#C07A9A', '#B5485D', '#7A5C45', '#7A7873', '#2B2B2B',
 ];
-const VIEW_TITLES = { dashboard: 'Resumen', transactions: 'Movimientos', categories: 'Categorías', settings: 'Ajustes' };
+const VIEW_TITLES = { dashboard: 'Resumen', transactions: 'Movimientos', categories: 'Categorías', budgets: 'Presupuestos', settings: 'Ajustes' };
+const MONTH_VIEWS = ['dashboard', 'transactions', 'budgets'];
 
 const state = {
   view: 'dashboard',
@@ -16,6 +17,7 @@ const state = {
   currency: 'MXN',
   categories: [],
   transactions: [],
+  budgets: [],
   catMap: new Map(),
   breakdownType: 'expense',
   filterType: 'all',
@@ -30,7 +32,11 @@ const state = {
   editingCat: null,
   catType: 'expense',
   catColor: PALETTE[0],
-  catFromTx: false,
+  catReturn: null, // 'tx' | 'budget' cuando la categoría se crea desde otro diálogo
+  // diálogo de presupuesto
+  editingBudget: null,
+  budgetCategoryId: null,
+  budgetPeriod: 'monthly',
 };
 
 // ---------- Utilidades ----------
@@ -87,6 +93,19 @@ function sortTx(list) {
   return list.sort((a, b) => (b.date.localeCompare(a.date)) || (b.createdAt - a.createdAt));
 }
 
+/** Ajusta el ancho del input de monto a su contenido para que "$" quede pegado al número. */
+function autosizeAmount(input) {
+  let m = document.querySelector('.amount-measure');
+  if (!m) {
+    m = document.createElement('span');
+    m.className = 'amount-measure';
+    m.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(m);
+  }
+  m.textContent = input.value || input.placeholder || '0';
+  input.style.width = `${Math.ceil(m.getBoundingClientRect().width) + 4}px`;
+}
+
 function toast(msg) {
   const el = $('#toast');
   el.textContent = msg;
@@ -109,10 +128,51 @@ function confirmDialog(title, text, okLabel = 'Confirmar') {
 
 // ---------- Datos ----------
 async function loadData() {
-  const [categories, transactions] = await Promise.all([DB.getAll('categories'), DB.getAll('transactions')]);
+  const [categories, transactions, budgets] = await Promise.all([
+    DB.getAll('categories'), DB.getAll('transactions'), DB.getAll('budgets'),
+  ]);
   state.categories = categories.sort((a, b) => a.name.localeCompare(b.name, 'es'));
   state.catMap = new Map(categories.map((c) => [c.id, c]));
   state.transactions = sortTx(transactions);
+  state.budgets = budgets.sort((a, b) =>
+    (a.period === b.period ? 0 : a.period === 'monthly' ? -1 : 1) ||
+    budgetLabel(a).localeCompare(budgetLabel(b), 'es'));
+}
+
+// ---------- Presupuestos ----------
+const budgetLabel = (b) => b.name || getCat(b.categoryId).name;
+
+/** Rango de fechas [desde, hasta] que cubre el presupuesto para un mes dado. */
+function budgetRange(b, month = state.month) {
+  if (b.period === 'range') return [b.start, b.end];
+  const [y, m] = month.split('-').map(Number);
+  return [`${month}-01`, `${month}-${pad(new Date(y, m, 0).getDate())}`];
+}
+
+/** Cuánto se ha gastado de un presupuesto (gastos de su categoría dentro del rango). */
+function budgetStatus(b, month = state.month) {
+  const [from, to] = budgetRange(b, month);
+  let spent = 0;
+  for (const t of state.transactions) {
+    if (t.type === 'expense' && t.categoryId === b.categoryId && t.date >= from && t.date <= to) spent += t.amount;
+  }
+  const remaining = b.amount - spent;
+  const pct = b.amount ? (spent / b.amount) * 100 : 0;
+  return { from, to, spent, remaining, pct, level: pct > 100 ? 'over' : pct >= 80 ? 'warn' : 'ok' };
+}
+
+/** Presupuestos que aplican al mes visible (mensuales + por fechas que se cruzan con el mes). */
+function budgetsForMonth(month = state.month) {
+  const [from, to] = budgetRange({ period: 'monthly' }, month);
+  return state.budgets.filter((b) => b.period === 'monthly' || (b.start <= to && b.end >= from));
+}
+
+function shortDate(str) {
+  return parseDate(str).toLocaleDateString('es-MX', { day: 'numeric', month: 'short' });
+}
+
+function periodLabel(b) {
+  return b.period === 'monthly' ? 'Mensual' : `${shortDate(b.start)} – ${shortDate(b.end)}`;
 }
 
 function monthTransactions() {
@@ -131,6 +191,49 @@ function renderAll() {
   renderDashboard();
   renderTransactions();
   renderCategories();
+  renderBudgets();
+}
+
+function budgetItemHTML(b, extraClass = '') {
+  const cat = getCat(b.categoryId);
+  const st = budgetStatus(b);
+  return `
+    <div class="budget-item level-${st.level} ${extraClass}" data-budget="${b.id}" style="--c:${cat.color}" tabindex="0">
+      <div class="budget-top">
+        <div class="tx-avatar" style="background:${cat.color};color:${textOn(cat.color)}">${escapeHTML(initial(cat.name))}</div>
+        <div class="budget-info">
+          <div class="tx-title">${escapeHTML(budgetLabel(b))}</div>
+          <div class="tx-meta"><span class="cat-chip" style="--c:${cat.color}">${escapeHTML(cat.name)}</span><span>${periodLabel(b)}</span></div>
+        </div>
+        <div class="budget-remaining">
+          <strong>${fmt(Math.abs(st.remaining))}</strong>
+          <small>${st.remaining >= 0 ? 'disponible' : 'excedido'}</small>
+        </div>
+      </div>
+      <div class="budget-bar"><i style="width:${Math.min(st.pct, 100)}%"></i></div>
+      <div class="budget-foot"><span>Gastado ${fmt(st.spent)} de ${fmt(b.amount)}</span><span>${Math.round(st.pct)}%</span></div>
+    </div>`;
+}
+
+function renderBudgets() {
+  const list = budgetsForMonth();
+
+  // Tarjeta del resumen
+  $('#dash-budgets').innerHTML = list.length
+    ? list.map((b) => budgetItemHTML(b)).join('')
+    : emptyHTML('Sin presupuestos para este mes', 'Crea uno en la sección Presupuestos.');
+
+  // Vista de presupuestos
+  let total = 0, spent = 0;
+  for (const b of list) { total += b.amount; spent += budgetStatus(b).spent; }
+  const left = total - spent;
+  $('#budget-overview').innerHTML = list.length ? `
+    <div><span class="eyebrow">Presupuestado</span><strong>${fmt(total)}</strong></div>
+    <div><span class="eyebrow">Gastado</span><strong>${fmt(spent)}</strong></div>
+    <div><span class="eyebrow">${left >= 0 ? 'Disponible' : 'Excedido'}</span><strong class="${left < 0 ? 'over' : ''}">${fmt(Math.abs(left))}</strong></div>` : '';
+  $('#budget-list').innerHTML = list.length
+    ? list.map((b) => budgetItemHTML(b, 'card')).join('')
+    : `<div class="card" style="grid-column:1/-1">${emptyHTML('Aún no tienes presupuestos', 'Asigna un monto a una categoría y cada gasto con esa categoría se irá restando.')}</div>`;
 }
 
 function renderMonth() {
@@ -214,7 +317,7 @@ function renderDashboard() {
   const recent = month.slice(0, 6);
   $('#recent-list').innerHTML = recent.length
     ? recent.map((t) => txItemHTML(t, { showDate: true })).join('')
-    : emptyHTML('Aún no hay movimientos este mes', 'Usa “Ingresar” o “Retirar” para empezar.');
+    : emptyHTML('Aún no hay movimientos este mes', 'Usa “Ingreso” o “Gasto” para empezar.');
 }
 
 function dayLabel(dateStr) {
@@ -303,7 +406,7 @@ function setView(view, push = true) {
   $$('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${view}`));
   $$('.nav-item').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
   $('#view-title').textContent = VIEW_TITLES[view];
-  $('#month-picker').hidden = !(view === 'dashboard' || view === 'transactions');
+  $('#month-picker').hidden = !MONTH_VIEWS.includes(view);
   if (push && location.hash !== `#${view}`) history.pushState(null, '', `#${view}`);
   window.scrollTo({ top: 0 });
 }
@@ -325,7 +428,7 @@ function openTxDialog({ type = 'expense', tx = null } = {}) {
   state.txType = tx ? tx.type : type;
   state.txCategoryId = tx ? tx.categoryId : null;
 
-  $('#tx-dialog-title').textContent = tx ? 'Editar movimiento' : (state.txType === 'income' ? 'Ingresar dinero' : 'Retirar dinero');
+  $('#tx-dialog-title').textContent = tx ? 'Editar movimiento' : txTitle();
   $('#tx-amount').value = tx ? (tx.amount / 100).toFixed(2) : '';
   $('#tx-date').value = tx ? tx.date : (state.month === monthKey(new Date()) ? todayStr() : `${state.month}-01`);
   $('#tx-note').value = tx?.note || '';
@@ -334,21 +437,67 @@ function openTxDialog({ type = 'expense', tx = null } = {}) {
   $('#tx-delete').hidden = !tx;
   setSegmented($('#tx-type'), 'type', state.txType);
   renderTxCategories();
+  renderBudgetHint();
+  autosizeAmount($('#tx-amount'));
 
   $('#tx-dialog').showModal();
   if (!matchMedia('(pointer: coarse)').matches) $('#tx-amount').focus();
 }
 
-function renderTxCategories() {
-  const cats = state.categories.filter((c) => catFits(c, state.txType));
-  if (state.txCategoryId != null && !cats.some((c) => c.id === state.txCategoryId)) state.txCategoryId = null;
-  $('#tx-categories').innerHTML = cats.map((c) => `
-    <button type="button" class="chip-option ${c.id === state.txCategoryId ? 'selected' : ''}" data-id="${c.id}" style="--chip:${c.color}">
+const txTitle = () => (state.txType === 'income' ? 'Nuevo ingreso' : 'Nuevo gasto');
+
+/** Botones de categoría (chips) con colores; se usan en movimientos y presupuestos. */
+function chipsHTML(cats, selectedId) {
+  return cats.map((c) => `
+    <button type="button" class="chip-option ${c.id === selectedId ? 'selected' : ''}" data-id="${c.id}" style="--chip:${c.color}">
       <i style="background:${c.color}"></i>${escapeHTML(c.name)}
     </button>`).join('') + `
     <button type="button" class="chip-option add" data-add>
       <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Nueva
     </button>`;
+}
+
+function renderTxCategories() {
+  const cats = state.categories.filter((c) => catFits(c, state.txType));
+  if (state.txCategoryId != null && !cats.some((c) => c.id === state.txCategoryId)) state.txCategoryId = null;
+  $('#tx-categories').innerHTML = chipsHTML(cats, state.txCategoryId);
+}
+
+/** Muestra cuánto queda en los presupuestos de la categoría elegida y cómo queda tras este gasto. */
+function renderBudgetHint() {
+  const box = $('#tx-budget-hint');
+  const date = $('#tx-date').value;
+  const catId = state.txCategoryId;
+  if (state.txType !== 'expense' || catId == null || !date) { box.hidden = true; return; }
+
+  const applicable = state.budgets.filter((b) =>
+    b.categoryId === catId && (b.period === 'monthly' || (date >= b.start && date <= b.end)));
+  if (!applicable.length) { box.hidden = true; return; }
+
+  const amount = parseAmount($('#tx-amount').value) || 0;
+  const editing = state.editingTx;
+  const cat = getCat(catId);
+  box.style.setProperty('--c', cat.color);
+  box.innerHTML = applicable.map((b) => {
+    const st = budgetStatus(b, date.slice(0, 7));
+    let spent = st.spent;
+    // Al editar, no contar dos veces el monto original de este mismo gasto
+    if (editing && editing.type === 'expense' && editing.categoryId === b.categoryId &&
+        editing.date >= st.from && editing.date <= st.to) spent -= editing.amount;
+    const available = b.amount - spent;
+    const after = available - amount;
+    const pct = Math.min(((spent + amount) / b.amount) * 100, 100);
+    const afterTxt = amount > 0
+      ? (after >= 0 ? `Después de este gasto quedarán <b>${fmt(after)}</b>.`
+                    : `<span class="over">Excederás el presupuesto por ${fmt(-after)}.</span>`)
+      : '';
+    return `<div>
+      <div><b>${escapeHTML(budgetLabel(b))}</b> · ${available >= 0 ? `disponible ${fmt(available)}` : `<span class="over">excedido por ${fmt(-available)}</span>`} de ${fmt(b.amount)}</div>
+      ${afterTxt ? `<div>${afterTxt}</div>` : ''}
+      <div class="budget-bar"><i style="width:${pct}%;${after < 0 ? 'background:var(--danger)' : ''}"></i></div>
+    </div>`;
+  }).join('');
+  box.hidden = false;
 }
 
 async function saveTx(e) {
@@ -375,7 +524,99 @@ async function saveTx(e) {
   // Si el movimiento cae en otro mes, navega a ese mes para que se vea
   if (!date.startsWith(state.month)) state.month = date.slice(0, 7);
   renderAll();
-  toast(state.editingTx ? 'Movimiento actualizado' : (tx.type === 'income' ? 'Ingreso registrado' : 'Gasto registrado'));
+
+  let msg = state.editingTx ? 'Movimiento actualizado' : (tx.type === 'income' ? 'Ingreso registrado' : 'Gasto registrado');
+  if (tx.type === 'expense') {
+    const exceeded = state.budgets.find((b) => b.categoryId === tx.categoryId &&
+      (b.period === 'monthly' || (date >= b.start && date <= b.end)) &&
+      budgetStatus(b, date.slice(0, 7)).remaining < 0);
+    if (exceeded) msg += ` · Excediste “${budgetLabel(exceeded)}”`;
+  }
+  toast(msg);
+}
+
+// ---------- Diálogo de presupuesto ----------
+function openBudgetDialog({ budget = null, categoryId = null } = {}) {
+  state.editingBudget = budget;
+  state.budgetCategoryId = budget ? budget.categoryId : categoryId;
+  state.budgetPeriod = budget ? budget.period : 'monthly';
+
+  const [, monthEnd] = budgetRange({ period: 'monthly' }, monthKey(new Date()));
+  $('#budget-dialog-title').textContent = budget ? 'Editar presupuesto' : 'Nuevo presupuesto';
+  $('#budget-amount').value = budget ? (budget.amount / 100).toFixed(2) : '';
+  $('#budget-name').value = budget?.name || '';
+  $('#budget-start').value = budget?.start || todayStr();
+  $('#budget-end').value = budget?.end || monthEnd;
+  $('#budget-currency').textContent = currencySymbol();
+  $('#budget-error').textContent = '';
+  $('#budget-delete').hidden = !budget;
+  renderBudgetCategories();
+  setBudgetPeriod(state.budgetPeriod);
+  autosizeAmount($('#budget-amount'));
+
+  $('#budget-dialog').showModal();
+  if (!matchMedia('(pointer: coarse)').matches) $('#budget-amount').focus();
+}
+
+function renderBudgetCategories() {
+  const cats = state.categories.filter((c) => catFits(c, 'expense'));
+  $('#budget-categories').innerHTML = chipsHTML(cats, state.budgetCategoryId);
+}
+
+function setBudgetPeriod(period) {
+  state.budgetPeriod = period;
+  setSegmented($('#budget-period'), 'period', period);
+  $('#budget-range').hidden = period !== 'range';
+  $('#budget-period-help').textContent = period === 'monthly'
+    ? 'Se reinicia cada mes: se restan los gastos de la categoría en ese mes.'
+    : 'Se restan los gastos de la categoría entre estas fechas.';
+}
+
+async function saveBudget(e) {
+  e.preventDefault();
+  const err = $('#budget-error');
+  const amount = parseAmount($('#budget-amount').value);
+  const period = state.budgetPeriod;
+  const start = $('#budget-start').value;
+  const end = $('#budget-end').value;
+  if (!(amount > 0)) { err.textContent = 'Ingresa un monto mayor a 0.'; $('#budget-amount').focus(); return; }
+  if (state.budgetCategoryId == null) { err.textContent = 'Elige la categoría del presupuesto.'; return; }
+  if (period === 'range' && (!start || !end)) { err.textContent = 'Elige las fechas de inicio y fin.'; return; }
+  if (period === 'range' && start > end) { err.textContent = 'La fecha final debe ser posterior a la inicial.'; return; }
+  if (period === 'monthly' && state.budgets.some((b) =>
+    b.id !== state.editingBudget?.id && b.period === 'monthly' && b.categoryId === state.budgetCategoryId)) {
+    err.textContent = 'Ya hay un presupuesto mensual para esta categoría.';
+    return;
+  }
+
+  const budget = {
+    ...(state.editingBudget || { createdAt: Date.now() }),
+    name: $('#budget-name').value.trim(),
+    categoryId: state.budgetCategoryId,
+    amount,
+    period,
+    start: period === 'range' ? start : null,
+    end: period === 'range' ? end : null,
+    updatedAt: Date.now(),
+  };
+  await DB.put('budgets', budget);
+  $('#budget-dialog').close();
+  await loadData();
+  renderAll();
+  toast(state.editingBudget ? 'Presupuesto actualizado' : 'Presupuesto creado');
+}
+
+async function deleteBudget() {
+  const b = state.editingBudget;
+  if (!b) return;
+  const ok = await confirmDialog('Eliminar presupuesto',
+    `Se eliminará el presupuesto “${budgetLabel(b)}”. Tus gastos no se borran.`, 'Eliminar');
+  if (!ok) return;
+  await DB.remove('budgets', b.id);
+  $('#budget-dialog').close();
+  await loadData();
+  renderAll();
+  toast('Presupuesto eliminado');
 }
 
 async function deleteTx() {
@@ -391,11 +632,11 @@ async function deleteTx() {
 }
 
 // ---------- Diálogo de categoría ----------
-function openCatDialog({ cat = null, type = 'expense', fromTx = false } = {}) {
+function openCatDialog({ cat = null, type = 'expense', returnTo = null } = {}) {
   state.editingCat = cat;
   state.catType = cat ? cat.type : type;
   state.catColor = cat ? cat.color : PALETTE[Math.floor(Math.random() * PALETTE.length)];
-  state.catFromTx = fromTx;
+  state.catReturn = returnTo;
 
   $('#cat-dialog-title').textContent = cat ? 'Editar categoría' : 'Nueva categoría';
   $('#cat-name').value = cat?.name || '';
@@ -444,9 +685,13 @@ async function saveCat(e) {
   $('#cat-dialog').close();
   await loadData();
 
-  if (state.catFromTx) {
+  if (state.catReturn === 'tx') {
     if (catFits(cat, state.txType)) state.txCategoryId = id;
     renderTxCategories();
+    renderBudgetHint();
+  } else if (state.catReturn === 'budget') {
+    if (catFits(cat, 'expense')) state.budgetCategoryId = id;
+    renderBudgetCategories();
   }
   renderAll();
   toast(state.editingCat ? 'Categoría actualizada' : 'Categoría creada');
@@ -456,9 +701,11 @@ async function deleteCat() {
   const cat = state.editingCat;
   if (!cat) return;
   const used = state.transactions.filter((t) => t.categoryId === cat.id).length;
-  const msg = used
+  const budgets = state.budgets.filter((b) => b.categoryId === cat.id).length;
+  let msg = used
     ? `“${cat.name}” se usa en ${used} ${used === 1 ? 'movimiento' : 'movimientos'}. Quedarán como “Sin categoría”.`
     : `Se eliminará la categoría “${cat.name}”.`;
+  if (budgets) msg += ` También se eliminará${budgets === 1 ? ' su presupuesto' : `n sus ${budgets} presupuestos`}.`;
   const ok = await confirmDialog('Eliminar categoría', msg, 'Eliminar');
   if (!ok) return;
   await DB.deleteCategory(cat.id);
@@ -579,14 +826,45 @@ function bindEvents() {
     const b = e.target.closest('button'); if (!b) return;
     state.txType = b.dataset.type;
     setSegmented(e.currentTarget, 'type', state.txType);
-    if (!state.editingTx) $('#tx-dialog-title').textContent = state.txType === 'income' ? 'Ingresar dinero' : 'Retirar dinero';
+    if (!state.editingTx) $('#tx-dialog-title').textContent = txTitle();
     renderTxCategories();
+    renderBudgetHint();
   });
   $('#tx-categories').addEventListener('click', (e) => {
     const b = e.target.closest('button'); if (!b) return;
-    if (b.hasAttribute('data-add')) return openCatDialog({ type: state.txType, fromTx: true });
+    if (b.hasAttribute('data-add')) return openCatDialog({ type: state.txType, returnTo: 'tx' });
     state.txCategoryId = Number(b.dataset.id);
     $('#tx-error').textContent = '';
+    $$('.chip-option', e.currentTarget).forEach((c) => c.classList.toggle('selected', c === b));
+    renderBudgetHint();
+  });
+  $('#tx-amount').addEventListener('input', (e) => { autosizeAmount(e.target); renderBudgetHint(); });
+  $('#budget-amount').addEventListener('input', (e) => autosizeAmount(e.target));
+  $('#tx-date').addEventListener('change', renderBudgetHint);
+
+  // Presupuestos
+  $('#btn-new-budget').addEventListener('click', () => openBudgetDialog());
+  const openBudgetFromList = (e) => {
+    const item = e.target.closest('[data-budget]'); if (!item) return;
+    if (e.type === 'keydown' && e.key !== 'Enter') return;
+    const budget = state.budgets.find((b) => b.id === Number(item.dataset.budget));
+    if (budget) openBudgetDialog({ budget });
+  };
+  ['#budget-list', '#dash-budgets'].forEach((sel) => {
+    $(sel).addEventListener('click', openBudgetFromList);
+    $(sel).addEventListener('keydown', openBudgetFromList);
+  });
+  $('#budget-form').addEventListener('submit', saveBudget);
+  $('#budget-delete').addEventListener('click', deleteBudget);
+  $('#budget-period').addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    setBudgetPeriod(b.dataset.period);
+  });
+  $('#budget-categories').addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.hasAttribute('data-add')) return openCatDialog({ type: 'expense', returnTo: 'budget' });
+    state.budgetCategoryId = Number(b.dataset.id);
+    $('#budget-error').textContent = '';
     $$('.chip-option', e.currentTarget).forEach((c) => c.classList.toggle('selected', c === b));
   });
 
@@ -644,7 +922,7 @@ function bindEvents() {
   });
   $('#btn-reset').addEventListener('click', async () => {
     const ok = await confirmDialog('Borrar todos los datos',
-      'Se eliminarán todos los movimientos y las categorías personalizadas. Esta acción no se puede deshacer.', 'Borrar todo');
+      'Se eliminarán todos los movimientos, presupuestos y categorías personalizadas. Esta acción no se puede deshacer.', 'Borrar todo');
     if (!ok) return;
     await DB.resetAll();
     await loadData();

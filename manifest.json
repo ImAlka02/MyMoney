@@ -17,7 +17,7 @@
     { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
   ],
   "shortcuts": [
-    { "name": "Ingresar dinero", "url": "./?action=income", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },
-    { "name": "Retirar dinero", "url": "./?action=expense", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] }
+    { "name": "Nuevo ingreso", "url": "./?action=income", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Nuevo gasto", "url": "./?action=expense", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] }
   ]
 }

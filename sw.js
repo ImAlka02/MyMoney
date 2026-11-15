@@ -1,5 +1,5 @@
 // Service worker de MyMoney: guarda la app en caché para usarla sin conexión.
-const CACHE = 'mymoney-v1';
+const CACHE = 'mymoney-v3';
 const ASSETS = [
   './',
   './index.html',
@@ -14,7 +14,12 @@ const ASSETS = [
 ];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  // cache: 'reload' evita que se guarden archivos viejos de la caché HTTP del navegador
+  event.waitUntil(
+    caches.open(CACHE)
+      .then((c) => c.addAll(ASSETS.map((url) => new Request(url, { cache: 'reload' }))))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener('activate', (event) => {
